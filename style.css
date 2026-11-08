@@ -1,0 +1,61 @@
+:root {
+  --bg: #faf7f0; --fg: #24212b; --muted: #77707f; --card: #ffffff; --line: #e6e0d4;
+  --accent: #6b4fd8; --hl: #ffe27a; --hlfg: #1b1820; --fs: 19px;
+  --r0: #24212b; --r1: #1f6fb2; --r2: #b0471f; --r3: #2f8a4a; --r4: #9a3a8e;
+  --r5: #8a6d00; --r6: #00828a; --r7: #c2335b; --r8: #5b5fc7; --r9: #6d7f1f;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15131b; --fg: #e9e5ef; --muted: #9a93a6; --card: #1f1c27; --line: #2e2a38;
+    --accent: #a993ff; --hl: #ffd54a; --hlfg: #15131b;
+    --r0: #e9e5ef; --r1: #7cc0ff; --r2: #ff9f73; --r3: #7fd99a; --r4: #ec92e0;
+    --r5: #e9c94f; --r6: #5fd6dd; --r7: #ff8aa8; --r8: #a9acff; --r9: #c4d96a;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+button { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 8px 12px; cursor: pointer; }
+button:active { transform: scale(.97); }
+button.icon { border: none; background: none; padding: 8px; min-width: 44px; min-height: 44px; font-size: 18px; }
+
+header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 4px;
+  padding: 6px 8px; padding-top: max(6px, env(safe-area-inset-top)); background: var(--bg);
+  border-bottom: 1px solid var(--line); }
+header h1 { flex: 1; margin: 0 8px; font-size: 17px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#list { padding: 12px 16px 40px; max-width: 720px; margin: 0 auto; }
+.bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--muted); font-size: 14px; }
+#chapters { list-style: none; padding: 0; margin: 0; }
+#chapters li { display: flex; align-items: center; gap: 10px; padding: 12px 4px; border-bottom: 1px solid var(--line); }
+#chapters .t { flex: 1; min-width: 0; cursor: pointer; }
+#chapters .t b { display: block; font-weight: 600; font-size: 15.5px; }
+#chapters .t small { color: var(--muted); font-size: 13px; }
+#chapters .prog { height: 3px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+#chapters .prog i { display: block; height: 100%; background: var(--accent); }
+#chapters .dl { font-size: 13px; padding: 6px 10px; white-space: nowrap; }
+#chapters .dl.done { color: var(--muted); }
+#chapters li.cur b { color: var(--accent); }
+
+#reader { padding: 8px 18px 190px; max-width: 720px; margin: 0 auto; }
+#text { font-size: var(--fs); line-height: 1.6; }
+#text h2 { font-size: calc(var(--fs) * 1.15); line-height: 1.3; margin: 18px 0 14px; }
+#text p { margin: 0 0 .7em; text-indent: 1.2em; }
+#text span { border-radius: 3px; cursor: pointer; }
+#text span.on { background: var(--hl); color: var(--hlfg); box-shadow: 0 0 0 2px var(--hl); }
+#text p.cur { }
+.legend { font-size: 13px; color: var(--muted); margin: 0 0 14px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.chnav { display: flex; justify-content: space-between; margin: 24px 0; }
+
+footer#player { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--card);
+  border-top: 1px solid var(--line); padding: 6px 12px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+#seek { width: 100%; accent-color: var(--accent); margin: 4px 0; }
+.row { display: flex; align-items: center; justify-content: space-between; max-width: 520px; margin: 0 auto; }
+#time { font-size: 13px; color: var(--muted); min-width: 92px; font-variant-numeric: tabular-nums; }
+#play.big { font-size: 26px; width: 58px; height: 58px; border-radius: 50%; background: var(--accent); color: #fff; }
+#speed { min-width: 56px; font-size: 15px; }
+#follow { position: absolute; left: 50%; transform: translateX(-50%); top: -48px; border-radius: 20px;
+  background: var(--accent); color: #fff; border: none; font-size: 14px; box-shadow: 0 2px 8px #0004; }
+#toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 130px; z-index: 9; background: var(--fg);
+  color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 14px; max-width: 90vw; }

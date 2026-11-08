@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ГПиМРМ — аудиокнига</title>
+<meta name="theme-color" content="#1d1b26">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <button id="back" class="icon" aria-label="К списку глав" hidden>‹</button>
+  <h1 id="title">Методы рационального мышления</h1>
+  <button id="fontDown" class="icon" aria-label="Шрифт меньше" hidden>A−</button>
+  <button id="fontUp" class="icon" aria-label="Шрифт больше" hidden>A+</button>
+</header>
+
+<main id="list">
+  <section class="bar">
+    <span id="storage"></span>
+    <button id="dlAll">Скачать все</button>
+  </section>
+  <ol id="chapters"></ol>
+</main>
+
+<main id="reader" hidden>
+  <article id="text"></article>
+  <nav class="chnav"><button id="prevCh">‹ Предыдущая</button><button id="nextCh">Следующая ›</button></nav>
+</main>
+
+<footer id="player" hidden>
+  <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Позиция">
+  <div class="row">
+    <span id="time">0:00</span>
+    <button class="icon" id="rew" aria-label="Назад 15 секунд">↺15</button>
+    <button class="icon big" id="play" aria-label="Играть">▶</button>
+    <button class="icon" id="fwd" aria-label="Вперёд 15 секунд">15↻</button>
+    <button class="icon" id="speed" aria-label="Скорость">1×</button>
+  </div>
+  <button id="follow" hidden>↧ К текущему месту</button>
+</footer>
+
+<div id="toast" hidden></div>
+<audio id="audio" preload="auto"></audio>
+<script src="app.js"></script>
+</body>
+</html>
