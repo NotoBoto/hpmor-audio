@@ -62,6 +62,16 @@ data class Settings(
     val autoBackupUri: String? = null,   // SAF folder for daily backups
     val lastUpdateCheck: Long = 0,
     val readerMode: String = "text",     // text | player
+    // library display (like Mihon): compact | comfortable | cover | list
+    val libDisplay: String = "compact",
+    val libColumns: Int = 0,             // 0 = automatic
+    val badgeUnread: Boolean = true,
+    val badgeDownloaded: Boolean = true,
+    val libContinueButton: Boolean = false,
+    val libSort: String = "title",       // title | last | unread | added | chapters
+    val libSortDesc: Boolean = false,
+    val filterDownloaded: Boolean = false,
+    val filterUnread: Boolean = false,
 )
 
 @Serializable

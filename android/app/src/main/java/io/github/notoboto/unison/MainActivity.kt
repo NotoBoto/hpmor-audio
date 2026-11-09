@@ -74,6 +74,10 @@ import io.github.notoboto.unison.ui.ReaderScreen
 import io.github.notoboto.unison.ui.SettingsScreen
 import io.github.notoboto.unison.ui.UnisonTheme
 import io.github.notoboto.unison.ui.UpdatesScreen
+import io.github.notoboto.unison.ui.fadeThroughIn
+import io.github.notoboto.unison.ui.fadeThroughOut
+import io.github.notoboto.unison.ui.sharedAxisXIn
+import io.github.notoboto.unison.ui.sharedAxisXOut
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -176,7 +180,14 @@ fun AppRoot(openPlayer: Boolean) {
 
 @Composable
 private fun NavGraph(nav: NavHostController) {
-    NavHost(nav, startDestination = "library") {
+    val tabs = TABS.map { it.route }.toSet()
+    fun both(a: androidx.navigation.NavBackStackEntry, b: androidx.navigation.NavBackStackEntry) = a.destination.route in tabs && b.destination.route in tabs
+    NavHost(nav, startDestination = "library",
+        enterTransition = { if (both(initialState, targetState)) fadeThroughIn() else sharedAxisXIn(true) },
+        exitTransition = { if (both(initialState, targetState)) fadeThroughOut() else sharedAxisXOut(true) },
+        popEnterTransition = { if (both(initialState, targetState)) fadeThroughIn() else sharedAxisXIn(false) },
+        popExitTransition = { if (both(initialState, targetState)) fadeThroughOut() else sharedAxisXOut(false) },
+    ) {
         composable("library") { LibraryScreen(nav) }
         composable("updates") { UpdatesScreen(nav) }
         composable("history") { HistoryScreen(nav) }
@@ -207,7 +218,7 @@ private fun MiniPlayer(nav: NavHostController) {
                 Cover(np.book.coverSmUrl, Modifier.size(width = 34.dp, height = 48.dp))
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(np.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium, fontSize = 14.5.sp)
+                    Text(if (app.store.state.collectAsState().value.settings.fullTitles) np.title else "Глава ${np.n}", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium, fontSize = 14.5.sp)
                     Text(np.book.shortTitle, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = { app.player.toggle() }) {

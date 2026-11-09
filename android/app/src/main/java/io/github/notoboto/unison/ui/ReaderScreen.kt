@@ -165,7 +165,7 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = .97f)),
                 navigationIcon = { IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") } },
-                title = { Text(np?.title ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 17.sp) },
+                title = { Text(np?.let { if (s.fullTitles) it.title else "Глава ${it.n}" } ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 17.sp) },
                 actions = {
                     Box {
                         IconButton(onClick = { fontMenu = true }) { Icon(Icons.Outlined.FormatSize, "Размер текста") }

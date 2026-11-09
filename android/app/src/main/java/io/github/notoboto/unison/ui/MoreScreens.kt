@@ -213,7 +213,8 @@ fun DownloadsScreen(nav: NavController) {
             items(jobs.entries.toList(), key = { it.key }) { (k, state) ->
                 val bookKey = k.substringBeforeLast(':'); val n = k.substringAfterLast(':').toInt()
                 val b = app.repo.book(bookKey); val c = b?.chapters?.find { it.n == n }
-                ListItem(headlineContent = { Text(c?.title ?: "Глава $n") },
+                ListItem(headlineContent = { Text(c?.let { chName(it, st.settings.fullTitles) } ?: "Глава $n") },
+                    overlineContent = { b?.let { Text(it.shortTitle) } },
                     supportingContent = {
                         if (state is DlState.Running) LinearProgressIndicator(progress = { state.p }, Modifier.fillMaxWidth().padding(top = 6.dp))
                         else Text(if (st.settings.wifiOnly) "Ждёт Wi‑Fi или очереди" else "В очереди")
