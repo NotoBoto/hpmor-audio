@@ -22,10 +22,10 @@
     <header class="bar solid" id="rbar">
       <button class="ib" id="rBack" aria-label="Назад"></button>
       <h1 class="bar-title" id="rTitle"></h1>
-      <button class="ib" id="fontDown" aria-label="Шрифт меньше">A−</button>
-      <button class="ib" id="fontUp" aria-label="Шрифт больше">A+</button>
-      <button class="ib" id="wake" aria-label="Не гасить экран во время прослушивания"></button>
-      <button class="ib" id="zen" aria-label="Скрыть интерфейс"></button>
+      <button class="ib" id="rAa" aria-label="Оформление текста">Aa</button>
+      <button class="ib" id="rSearch" aria-label="Поиск в главе"></button>
+      <button class="ib" id="rBm" aria-label="Закладки"></button>
+      <button class="ib" id="rMenu" aria-label="Меню"></button>
     </header>
     <article id="text"></article>
     <nav class="chnav"><button id="prevCh">‹ Предыдущая</button><button id="nextCh">Следующая ›</button></nav>
@@ -42,11 +42,14 @@
     <button class="ib" id="speed" aria-label="Скорость">1×</button>
   </div>
   <button id="follow" hidden>↧ К текущему месту</button>
+  <button id="sleepInd" hidden aria-label="Таймер сна"></button>
 </footer>
+<div id="roChip" hidden><span>Только чтение</span><button id="roListen">▶ Слушать отсюда</button><button id="roExit" aria-label="Выйти из режима">✕</button></div>
 
 <button id="fab" hidden><span class="fab-i"></span><span class="fab-t">Продолжить</span></button>
 <div id="selbar" hidden></div>
 
+<div id="modes" hidden></div>
 <nav id="nav">
   <button data-tab="library"><i></i><span>Библиотека</span></button>
   <button data-tab="updates"><i></i><span>Обновления</span><b class="badge" hidden></b></button>
