@@ -1280,7 +1280,8 @@ async function shareQuote(q) {
   if (navigator.share) { try { await navigator.share({ text }); return; } catch (e) { if (e.name === 'AbortError') return; } }
   toast((await copyText(text)) ? 'Цитата скопирована' : 'Не удалось поделиться');
 }
-const loadImg = (src) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+// crossOrigin: covers may come from the audio host (Cloudflare); without CORS the canvas would be tainted
+const loadImg = (src) => new Promise((res, rej) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = rej; i.src = src; });
 function drawCover(x, img, dx, dy, dw, dh) {
   const s = Math.max(dw / img.width, dh / img.height), sw = dw / s, sh = dh / s;
   x.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, dx, dy, dw, dh);

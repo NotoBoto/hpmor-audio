@@ -14,10 +14,24 @@ self.addEventListener('activate', (e) => {
 
 const isChapterFile = (p) => /\/ch\d+\.(json|ogg(\.\d+)?)$/.test(p);
 const isList = (p) => /\/(index|books)\.json$/.test(p);
+const isCover = (p) => /\/cover(-sm)?\.(jpg|jpeg|png|webp)$/.test(p);
+
+// stale-while-revalidate; always fetched with CORS (the host sends Access-Control-Allow-Origin: *),
+// so one cached copy serves both <img> and the canvas of the quote picture
+async function coverFromCache(url) {
+  const c = await caches.open(SHELL), key = url.origin + url.pathname;
+  const hit = await c.match(key);
+  const net = fetch(key, { mode: 'cors' }).then((r) => { if (r.ok) c.put(key, r.clone()); return r; }).catch(() => hit);
+  return hit || net;
+}
 
 self.addEventListener('fetch', (e) => {
   const req = e.request, url = new URL(req.url);
-  if (req.method !== 'GET' || url.origin !== location.origin) return;
+  if (req.method !== 'GET') return;
+  if (url.origin !== location.origin) {    // covers on the audio host (Cloudflare): keep a copy for offline
+    if (isCover(url.pathname)) e.respondWith(coverFromCache(url));
+    return;
+  }
   const p = url.pathname;
   if (isList(p)) {                         // lists: network first, so new chapters appear
     e.respondWith(fetch(req, { cache: 'no-store' }).catch(() => caches.match(req, { ignoreSearch: true })));
