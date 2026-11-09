@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Refresh
@@ -106,6 +107,7 @@ fun MoreScreen(nav: NavController) {
         Row1(Icons.AutoMirrored.Filled.Label, "Категории", "Вкладки библиотеки") { nav.navigate("categories") }
         Row1(Icons.Filled.QueryStats, "Статистика", "Время прослушивания, главы, книги") { nav.navigate("stats") }
         Row1(Icons.Filled.Storage, "Хранилище", "Где хранить главы, кэш, место по книгам") { nav.navigate("storage") }
+        Row1(Icons.Filled.People, "Профили", io.github.notoboto.unison.data.Profiles.current(LocalContext.current)) { nav.navigate("profiles") }
         Row1(Icons.Filled.Settings, "Настройки", "Тема, плеер, загрузки, резервная копия") { nav.navigate("settings") }
         Row1(Icons.Filled.Info, "О программе", "Версия ${BuildConfig.VERSION_NAME}, обновления, лицензии") { nav.navigate("about") }
     }
@@ -190,6 +192,13 @@ fun SettingsScreen(nav: NavController) {
                 PickRow("Перемотка назад", s.skipBack, listOf(5, 10, 15, 30, 60).map { it to "$it с" }) { v -> set { it.copy(skipBack = v) } }
                 PickRow("Перемотка вперёд", s.skipForward, listOf(5, 10, 15, 30, 60).map { it to "$it с" }) { v -> set { it.copy(skipForward = v) } }
                 SwitchRow("Не гасить экран", "Пока открыта глава и идёт воспроизведение", s.keepScreenOn) { v -> set { it.copy(keepScreenOn = v) } }
+                PickRow("«Ранее в книге»", s.recapAfterHours, listOf(0 to "Не показывать", 6 to "После перерыва от 6 ч", 12 to "После перерыва от 12 ч",
+                    24 to "После перерыва от суток", 72 to "После перерыва от 3 дней")) { v -> set { it.copy(recapAfterHours = v) } }
+                SwitchRow("Подсказки глоссария", "«Кто это?» в меню долгого нажатия на слово", s.glossaryHints) { v -> set { it.copy(glossaryHints = v) } }
+                SwitchRow("Пропускать паузы", "Длинная тишина между фразами сокращается", s.skipSilence) { v -> set { it.copy(skipSilence = v) } }
+                PickRow("Усиление голоса", s.voiceBoost, listOf(0 to "Выключено", 3 to "+3 дБ", 6 to "+6 дБ", 9 to "+9 дБ", 12 to "+12 дБ")) { v -> set { it.copy(voiceBoost = v) } }
+                SwitchRow("Старт при подключении наушников", "Проводные, Bluetooth и автомобиль — продолжить с последнего места", s.autoStartHeadphones) { v -> set { it.copy(autoStartHeadphones = v) } }
+                SwitchRow("Живые субтитры", "Звучащая фраза в шторке, на экране блокировки и в большом виджете", s.liveSubtitles) { v -> set { it.copy(liveSubtitles = v) } }
                 SwitchRow("Кнопка трансляции", "Google Cast: колонки и телевизоры в той же сети", s.castButton) { v -> set { it.copy(castButton = v) } }
                 SwitchRow("Своя скорость для каждой книги", "Скорость запоминается отдельно для книги", s.perBookSpeed) { v -> set { it.copy(perBookSpeed = v) } }
                 PickRow("Перемотка после паузы", s.autoRewindAfterMin, listOf(0 to "Выключено", 1 to "Пауза дольше 1 мин", 2 to "Пауза дольше 2 мин",
@@ -202,6 +211,13 @@ fun SettingsScreen(nav: NavController) {
                     PickRow("До", s.sleepTo, hh) { v -> set { it.copy(sleepTo = v) } }
                     PickRow("Длительность таймера", s.sleepScheduleMin, listOf(10, 15, 20, 30, 45, 60, 90).map { it to "$it мин" }) { v -> set { it.copy(sleepScheduleMin = v) } }
                 }
+            }
+            item {
+                SheetTitle("Привычка")
+                PickRow("Цель на день", s.goalMin, listOf(0 to "Без цели", 10 to "10 мин", 15 to "15 мин", 20 to "20 мин", 30 to "30 мин", 45 to "45 мин", 60 to "1 час", 90 to "1,5 часа")) { v -> set { it.copy(goalMin = v) } }
+                SwitchRow("Напоминание", "Если сегодня ещё не слушали или цель не выполнена", s.reminderOn) { v -> set { it.copy(reminderOn = v) }; io.github.notoboto.unison.Habits.schedule(ctx) }
+                if (s.reminderOn) PickRow("Время напоминания", s.reminderAt, (6 * 2 until 24 * 2).map { it * 30 to "%02d:%02d".format(it * 30 / 60, it * 30 % 60) }) { v ->
+                    set { it.copy(reminderAt = v) }; io.github.notoboto.unison.Habits.schedule(ctx) }
             }
             item {
                 SheetTitle("Главы")
@@ -230,9 +246,12 @@ fun SettingsScreen(nav: NavController) {
                 SwitchRow("Обновлять переозвученные", "Скачанная глава заменяется новой версией сама", s.autoUpdate) { v -> set { it.copy(autoUpdate = v) } }
                 SwitchRow("Уведомлять о завершении", "«Скачано N глав» по окончании очереди", s.notifyDownloads) { v -> set { it.copy(notifyDownloads = v) } }
                 Row1(Icons.Filled.Storage, "Хранилище", "Где хранить главы, очистка кэша") { nav.navigate("storage") }
+                PickRow("Лимит места", s.storageLimitGb, listOf(0 to "Без лимита", 1 to "1 ГБ", 2 to "2 ГБ", 5 to "5 ГБ", 10 to "10 ГБ", 20 to "20 ГБ")) { v ->
+                    set { it.copy(storageLimitGb = v) }; app.downloads.enforceLimit() }
             }
             item {
                 SheetTitle("Синтезатор речи (свои книги)")
+                Row1(Icons.Filled.RecordVoiceOver, "Голоса Piper и чтение по ролям", if (s.ttsEngine == "piper") "Включены нейросетевые голоса" else "Сейчас: системный синтезатор") { nav.navigate("voices") }
                 PickRow("Скорость речи", s.ttsRate, listOf(0.7f, 0.85f, 1f, 1.15f, 1.3f, 1.5f).map { it to "${it}×".replace('.', ',') }) { v -> set { it.copy(ttsRate = v) } }
                 PickRow("Высота голоса", s.ttsPitch, listOf(0.8f, 0.9f, 1f, 1.1f, 1.2f).map { it to "${it}".replace('.', ',') }) { v -> set { it.copy(ttsPitch = v) } }
                 Row1(Icons.Filled.RecordVoiceOver, "Голос и движок", "Системные настройки синтеза речи") {
@@ -243,6 +262,10 @@ fun SettingsScreen(nav: NavController) {
                     Modifier.padding(horizontal = 16.dp, vertical = 4.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row1(Icons.Filled.Upload, "Сохранить файл прогресса", "Прогресс, закладки, история, категории") { syncOut.launch("unison-progress_" + java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm", java.util.Locale.US).format(java.util.Date()) + ".json") }
                 Row1(Icons.Filled.Download, "Загрузить файл прогресса", "С сайта или другого устройства") { syncIn.launch(arrayOf("application/json", "*/*")) }
+                SheetTitle("Безопасность")
+                SwitchRow("Блокировка приложения", "Отпечаток, лицо или PIN телефона при входе", s.appLock) { v -> set { it.copy(appLock = v) } }
+                if (s.appLock) PickRow("Блокировать снова", s.lockAfterMin, listOf(0 to "Сразу после выхода", 1 to "Через 1 мин", 5 to "Через 5 мин", 15 to "Через 15 мин", 60 to "Через час")) { v -> set { it.copy(lockAfterMin = v) } }
+                SwitchRow("Скрывать в недавних", "Содержимое не видно в списке приложений и на скриншотах", s.hideInRecents) { v -> set { it.copy(hideInRecents = v) } }
                 SheetTitle("Резервная копия")
                 Row1(Icons.Filled.Backup, "Создать резервную копию", "Библиотека, прогресс, история, настройки, источники") { exportLauncher.launch(backupFileName()) }
                 Row1(Icons.Filled.Refresh, "Восстановить из файла", null) { importLauncher.launch(arrayOf("application/json", "*/*")) }

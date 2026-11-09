@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -80,7 +81,29 @@ import io.github.notoboto.unison.ui.sharedAxisXIn
 import io.github.notoboto.unison.ui.sharedAxisXOut
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+class MainActivity : androidx.fragment.app.FragmentActivity() {
+    private val locked = kotlinx.coroutines.flow.MutableStateFlow(false)
+    private var backgroundAt = 0L
+
+    override fun onStart() {
+        super.onStart()
+        val s = app().store.s.settings
+        if (s.hideInRecents) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE) else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        if (s.appLock && (backgroundAt == 0L || System.currentTimeMillis() - backgroundAt >= s.lockAfterMin * 60_000L)) { locked.value = true; unlock() }
+    }
+
+    fun unlock() {
+        val mgr = androidx.biometric.BiometricManager.from(this)
+        val auth = if (Build.VERSION.SDK_INT >= 30) androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                   else androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
+        if (mgr.canAuthenticate(auth) != androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS) { locked.value = false; return }   // no lock screen set up
+        val info = androidx.biometric.BiometricPrompt.PromptInfo.Builder().setTitle("Unison").setSubtitle("Разблокируйте, чтобы продолжить")
+            .setAllowedAuthenticators(auth).apply { if (Build.VERSION.SDK_INT < 30) setNegativeButtonText("Отмена") }.build()
+        androidx.biometric.BiometricPrompt(this, androidx.core.content.ContextCompat.getMainExecutor(this), object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) { locked.value = false }
+        }).authenticate(info)
+    }
+
     private var pendingOpenPlayer = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,10 +111,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         pendingOpenPlayer = intent?.getBooleanExtra("openPlayer", false) == true
         if (intent?.getBooleanExtra("openUpdates", false) == true) openUpdatesRequest.value = true
+        handleShortcut(intent)
         setContent {
             val st by app().store.state.collectAsState()
             UnisonTheme(st.settings) {
-                if (!st.onboardingDone) androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.background) { io.github.notoboto.unison.ui.OnboardingScreen { app().store.update { it.copy(onboardingDone = true) } } }
+                val isLocked by locked.collectAsState()
+                if (isLocked) androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.background) {
+                    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        androidx.compose.material3.Button(onClick = { unlock() }) { Text("🔒 Разблокировать") }
+                    }
+                } else if (!st.onboardingDone) androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.background) { io.github.notoboto.unison.ui.OnboardingScreen { app().store.update { it.copy(onboardingDone = true) } } }
                 else AppRoot(openPlayer = pendingOpenPlayer.also { pendingOpenPlayer = false })
             }
         }
@@ -100,13 +129,25 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.getBooleanExtra("openUpdates", false)) openUpdatesRequest.value = true
+        handleShortcut(intent)
         if (intent.getBooleanExtra("openPlayer", false)) openPlayerRequest.value = true
     }
-    override fun onStop() { super.onStop(); app().player.saveNow(); app().store.flush() }
+    /** App-icon shortcuts: continue, 30-minute session, car mode. */
+    private fun handleShortcut(i: Intent?) {
+        val p = app().player
+        when (i?.action) {
+            "io.github.notoboto.unison.RESUME" -> { p.toggleOrResume(); openPlayerRequest.value = true }
+            "io.github.notoboto.unison.SLEEP30" -> { if (!p.isPlaying.value) p.toggleOrResume(); p.startSleep(30 * 60_000L); openPlayerRequest.value = true }
+            "io.github.notoboto.unison.CAR" -> { if (!p.isPlaying.value) p.toggleOrResume(); openCarRequest.value = true }
+        }
+    }
+
+    override fun onStop() { backgroundAt = System.currentTimeMillis(); super.onStop(); app().player.saveNow(); app().store.flush() }
 
     companion object {
         val openPlayerRequest = kotlinx.coroutines.flow.MutableStateFlow(false)
         val openUpdatesRequest = kotlinx.coroutines.flow.MutableStateFlow(false)
+        val openCarRequest = kotlinx.coroutines.flow.MutableStateFlow(false)
     }
 }
 
@@ -141,6 +182,8 @@ fun AppRoot(openPlayer: Boolean) {
     }
     val openReq by MainActivity.openPlayerRequest.collectAsState()
     val openUpd by MainActivity.openUpdatesRequest.collectAsState()
+    val openCar by MainActivity.openCarRequest.collectAsState()
+    LaunchedEffect(openCar) { if (openCar) { nav.navigate("car") { launchSingleTop = true }; MainActivity.openCarRequest.value = false } }
     LaunchedEffect(openUpd) { if (openUpd) { nav.navigate("updates") { launchSingleTop = true }; MainActivity.openUpdatesRequest.value = false } }
     LaunchedEffect(openPlayer, openReq) {
         if (openPlayer || openReq) app.player.now.value?.let { nav.navigate("reader/${it.book.key}/${it.n}") { launchSingleTop = true } }
@@ -221,6 +264,11 @@ private fun NavGraph(nav: NavHostController) {
         composable("categories") { io.github.notoboto.unison.ui.CategoriesScreen(nav) }
         composable("characters/{key}") { io.github.notoboto.unison.ui.CharactersScreen(nav, it.arguments?.getString("key")!!) }
         composable("search/{key}") { io.github.notoboto.unison.ui.BookSearchScreen(nav, it.arguments?.getString("key")!!) }
+        composable("highlights/{key}") { io.github.notoboto.unison.ui.HighlightsScreen(nav, it.arguments?.getString("key")!!) }
+        composable("glossary/{key}") { io.github.notoboto.unison.ui.GlossaryScreen(nav, it.arguments?.getString("key")!!) }
+        composable("profiles") { io.github.notoboto.unison.ui.ProfilesScreen(nav) }
+        composable("car") { io.github.notoboto.unison.ui.CarScreen(nav) }
+        composable("voices") { io.github.notoboto.unison.ui.VoicesScreen(nav) }
         composable("stats") { io.github.notoboto.unison.ui.StatsScreen(nav) }
         composable("storage") { io.github.notoboto.unison.ui.StorageScreen(nav) }
         composable("bookmarks/{key}") { io.github.notoboto.unison.ui.BookmarksScreen(nav, it.arguments?.getString("key")!!) }

@@ -23,6 +23,7 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "1.1.0"
+        ndk { abiFilters += listOf("arm64-v8a") }
     }
 
     signingConfigs {
@@ -40,7 +41,7 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (signProps.isNotEmpty()) signingConfig = signingConfigs.getByName("release")
         }
-        debug { applicationIdSuffix = ".debug" }
+        debug { applicationIdSuffix = ".debug"; ndk { abiFilters += listOf("x86_64") } }   // + emulator
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -76,8 +77,11 @@ dependencies {
     implementation("androidx.media3:media3-cast:1.6.1")
     implementation("androidx.mediarouter:mediarouter:1.7.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.biometric:biometric:1.1.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+    implementation(files("libs/sherpa-onnx.aar"))          // offline neural voices (Piper)
+    implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.google.guava:guava:33.4.8-android")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.10.2")

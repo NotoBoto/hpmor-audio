@@ -10,6 +10,13 @@ import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.MoreVert
@@ -50,6 +57,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -186,8 +194,21 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
     var focusRole by remember(np?.n) { mutableStateOf(-1) }
     var readOnly by remember { mutableStateOf(false) }
     var visibleTime by remember { mutableStateOf<Double?>(null) }
-    var wordMenu by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var wordMenu by remember { mutableStateOf<WordHit?>(null) }
     val look = rememberLook(s)
+    var recapText by remember(np?.n) { mutableStateOf<String?>(null) }
+    var gloss by remember { mutableStateOf<List<io.github.notoboto.unison.data.GlossaryEntry>>(emptyList()) }
+    LaunchedEffect(np?.book?.key, np?.n) {
+        val cur = np ?: return@LaunchedEffect
+        gloss = app.repo.glossary(cur.book)
+        // «Ранее в книге»: after a break, remind what happened in the previous chapter
+        val lastTs = st.history.firstOrNull()?.takeIf { true }?.ts ?: 0L
+        val gapH = (System.currentTimeMillis() - (st.history.drop(if (st.history.firstOrNull()?.n == cur.n) 1 else 0).firstOrNull()?.ts ?: lastTs)) / 3_600_000.0
+        if (s.recapAfterHours > 0 && gapH >= s.recapAfterHours && app.store.progress(cur.book.key, cur.n).pos < 30) {
+            val prev = cur.book.chapters.lastOrNull { it.n < cur.n } ?: return@LaunchedEffect
+            app.repo.recaps(cur.book).find { it.n == prev.n }?.let { recapText = "${prev.title}\n\n${it.recap}" }
+        }
+    }
     val playerMode = s.readerMode == "player"
 
     Box(Modifier.fillMaxSize().background(if (playerMode) MaterialTheme.colorScheme.background else look.bg)) {
@@ -195,11 +216,23 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
         when {
             error != null -> EmptyState("📡", error!!)
             t == null -> EmptyState("⏳", "Загружаю главу…")
-            playerMode -> PlayerMode(t, np?.book?.coverUrl, pos, look, zones, onToggleUi = { immersive = !immersive })
+            playerMode || t.paras.size <= 1 -> PlayerMode(t, np?.book?.coverUrl, pos, look, zones, onToggleUi = { immersive = !immersive })
             else -> TextMode(t, pos, look, immersive, zones, focusRole, { focusRole = it }, readOnly, { visibleTime = it },
-                onTapEmpty = { immersive = !immersive }, onSeek = { player.seekTo(it); player.play() }, onLong = { w, sn -> wordMenu = w to sn })
+                onTapEmpty = { immersive = !immersive }, onSeek = { player.seekTo(it); player.play() }, onLong = { wordMenu = it },
+                marks = np?.let { st.highlights[it.book.key] }.orEmpty())
         }
 
+        recapText?.let { r ->
+            androidx.compose.material3.Card(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 70.dp, start = 12.dp, end = 12.dp).fillMaxWidth(),
+                colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Ранее в книге", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    Text(r, fontSize = 14.5.sp, color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.padding(vertical = 6.dp).heightIn(max = 300.dp).verticalScroll(rememberScrollState()))
+                    TextButton(onClick = { recapText = null }, Modifier.align(Alignment.End)) { Text("Понятно") }
+                }
+            }
+        }
         AnimatedVisibility(!immersive, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = .97f)),
@@ -251,6 +284,15 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
                                     if (!readOnly) { player.pause(); readOnly = true }
                                     else { readOnly = false; visibleTime?.let { player.seekTo(it) } }
                                 })
+                            DropdownMenuItem({ Text("В машине") }, leadingIcon = { Icon(Icons.Filled.DirectionsCar, null) }, onClick = { moreMenu = false; nav.navigate("car") })
+                            np?.let { cur -> DropdownMenuItem({ Text("Пересказ прошлой главы") }, leadingIcon = { Icon(Icons.Filled.History, null) }, onClick = {
+                                moreMenu = false
+                                scope.launch {
+                                    val prev = cur.book.chapters.lastOrNull { it.n < cur.n }
+                                    recapText = prev?.let { pc -> app.repo.recaps(cur.book).find { it.n == pc.n }?.let { "${pc.title}\n\n${it.recap}" } } ?: "Для этой главы пересказа нет."
+                                }
+                            }) }
+                            np?.let { cur -> DropdownMenuItem({ Text("Глоссарий") }, leadingIcon = { Icon(Icons.Filled.Info, null) }, onClick = { moreMenu = false; nav.navigate("glossary/${cur.book.key}") }) }
                             if (!playerMode) DropdownMenuItem({ Text("Поиск в главе") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, onClick = { moreMenu = false; searchOpen = true })
                             np?.let { cur ->
                                 DropdownMenuItem({ Text("Поиск по книге") }, leadingIcon = { Icon(Icons.Filled.ManageSearch, null) }, onClick = { moreMenu = false; nav.navigate("search/${cur.book.key}") })
@@ -307,7 +349,15 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
 
     if (readingSheet) ReadingSheet(s, { f -> app.store.settings(f) }) { readingSheet = false }
     if (searchOpen) text?.let { tt -> ChapterSearchDialog(tt, onPick = { time -> searchOpen = false; player.seekTo(time) }) { searchOpen = false } }
-    wordMenu?.let { (w, sn) -> WordDialog(w, sn, np?.book?.meta?.title ?: "", np?.book?.coverUrl) { wordMenu = null } }
+    wordMenu?.let { hit -> WordDialog(hit, np?.book?.meta?.title ?: "", np?.book?.coverUrl,
+        glossary = if (s.glossaryHints) lookupGlossary(gloss, hit.word, np?.n ?: 0) else null, onHighlight = { color, whole ->
+        np?.let { cur ->
+            val h = if (whole) io.github.notoboto.unison.data.Highlight(cur.n, hit.p, 0, hit.lastTok, color, "", hit.paragraph, hit.pos)
+                    else io.github.notoboto.unison.data.Highlight(cur.n, hit.p, hit.a, hit.b, color, "", hit.sentence, hit.pos)
+            app.store.addHighlight(cur.book.key, h)
+            android.widget.Toast.makeText(ctx, "Выделено", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }) { wordMenu = null } }
     if (sleepSheet) ModalBottomSheet(onDismissRequest = { sleepSheet = false }) {
         Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
             SheetTitle("Таймер сна")
@@ -336,9 +386,12 @@ fun rememberLook(s: Settings): Look {
     return Look(s.fontSize, fam, s.lineHeight, s.margins, bg, fg, hl, s.sentenceHighlight, bg.luminance() > 0.5f)
 }
 
+val HL_COLORS = mapOf("yellow" to Color(0xFFFFD54A), "green" to Color(0xFF9BE39B), "blue" to Color(0xFF8AC7FF), "pink" to Color(0xFFFF8AB3), "purple" to Color(0xFFC9A6FF))
+
 private val sentenceEnd = { w: String -> w.trimEnd('»', '"', ')', '—').let { it.endsWith('.') || it.endsWith('!') || it.endsWith('?') || it.endsWith('…') } }
 
-private fun buildPara(toks: List<Tok>, colors: List<Color>, active: Int, look: Look?, focusRole: Int = -1): ParaText {
+private fun buildPara(toks: List<Tok>, colors: List<Color>, active: Int, look: Look?, focusRole: Int = -1,
+                      marks: List<io.github.notoboto.unison.data.Highlight> = emptyList()): ParaText {
     val starts = IntArray(toks.size)
     var a = active; var b = active
     if (active >= 0 && look?.sentence == true) {
@@ -348,11 +401,16 @@ private fun buildPara(toks: List<Tok>, colors: List<Color>, active: Int, look: L
     val hl = if (look == null) HL else look.hl
     val text = buildAnnotatedString {
         toks.forEachIndexed { i, tk ->
-            if (i > 0) append(' ')
+            if (i > 0) {
+                val m = marks.firstOrNull { (i - 1) in it.a..it.b && i in it.a..it.b }
+                if (m != null) withStyle(SpanStyle(background = (HL_COLORS[m.color] ?: HL).copy(alpha = .38f))) { append(' ') } else append(' ')
+            }
             starts[i] = length
             var c = if (tk.role > 0) colors[(tk.role - 1) % colors.size] else Color.Unspecified
             if (focusRole >= 0 && tk.role != focusRole) c = (if (c == Color.Unspecified) (look?.fg ?: Color.Gray) else c).copy(alpha = 0.28f)
             val on = active >= 0 && i in a..b
+            val mark = marks.firstOrNull { i in it.a..it.b }
+            if (!on && mark != null) { withStyle(SpanStyle(background = (HL_COLORS[mark.color] ?: HL).copy(alpha = .38f), color = c)) { append(tk.word) }; return@forEachIndexed }
             when {
                 on && hl != null -> withStyle(SpanStyle(background = hl, color = HL_FG)) { append(tk.word) }
                 on -> withStyle(SpanStyle(color = c, fontWeight = FontWeight.Bold, textDecoration = TextDecoration.Underline)) { append(tk.word) }
@@ -366,7 +424,8 @@ private fun buildPara(toks: List<Tok>, colors: List<Color>, active: Int, look: L
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean, zones: Zones, focusRole: Int, onFocus: (Int) -> Unit,
-                     readOnly: Boolean, onVisible: (Double) -> Unit, onTapEmpty: () -> Unit, onSeek: (Double) -> Unit, onLong: (String, String) -> Unit) {
+                     readOnly: Boolean, onVisible: (Double) -> Unit, onTapEmpty: () -> Unit, onSeek: (Double) -> Unit,
+                     onLong: (WordHit) -> Unit, marks: List<io.github.notoboto.unison.data.Highlight> = emptyList()) {
     val colors = if (look.lightBg) roleColorsLight else roleColorsDark
     val wi = t.wordAt(pos)
     val activePara = if (wi >= 0) t.timeline[wi].second else -1
@@ -418,7 +477,8 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
         itemsIndexed(t.paras.drop(1)) { idx, toks ->
             val pi = idx + 1
             val act = if (pi == activePara && !readOnly) activeTok else -1
-            val pt = remember(t, pi, act, colors, look, focusRole) { buildPara(toks, colors, act, look, focusRole) }
+            val pm = marks.filter { it.n == t.n && it.p == pi }
+            val pt = remember(t, pi, act, colors, look, focusRole, pm) { buildPara(toks, colors, act, look, focusRole, pm) }
             fun tokAt(off: androidx.compose.ui.geometry.Offset): Int {
                 val lay = layouts[pi] ?: return -1
                 val ch = lay.getOffsetForPosition(off)
@@ -436,7 +496,8 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
                         if (k >= 0) {
                             var a = k; while (a > 0 && !sentenceEnd(toks[a - 1].word)) a--
                             var b = k; while (b < toks.size - 1 && !sentenceEnd(toks[b].word)) b++
-                            onLong(toks[k].word, toks.subList(a, b + 1).joinToString(" ") { it.word })
+                            onLong(WordHit(toks[k].word, toks.subList(a, b + 1).joinToString(" ") { it.word }, pi, a, b,
+                                toks.subList(a, b + 1).firstOrNull { it.t != null }?.t ?: 0.0, toks.joinToString(" ") { it.word }, toks.size - 1))
                         }
                     })
                 },
@@ -554,15 +615,35 @@ private fun ReadingSheet(s: Settings, set: ((Settings) -> Settings) -> Unit, onC
 
 // ---------------- word actions ----------------
 @Composable
-private fun WordDialog(word: String, sentence: String, bookTitle: String, cover: String?, onDismiss: () -> Unit) {
+private fun WordDialog(hit: WordHit, bookTitle: String, cover: String?, glossary: io.github.notoboto.unison.data.GlossaryEntry? = null,
+                       onHighlight: (String, Boolean) -> Unit, onDismiss: () -> Unit) {
+    val word = hit.word; val sentence = hit.sentence
+    var whole by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val clip = androidx.compose.ui.platform.LocalClipboardManager.current
     val clean = word.trim { !it.isLetterOrDigit() && it != '-' }
     AlertDialog(onDismissRequest = onDismiss, title = { Text(clean) }, text = {
         Column {
+            glossary?.let { g ->
+                androidx.compose.material3.Card(colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    modifier = Modifier.padding(bottom = 10.dp)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(g.term + if (g.kind.isNotBlank()) " · ${g.kind}" else "", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text(g.short, fontSize = 14.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+            }
             Text("«$sentence»", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 6, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(10.dp))
+            Text("Выделить ${if (whole) "абзац" else "предложение"}:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                HL_COLORS.forEach { (name, c) ->
+                    Box(Modifier.size(32.dp).clip(androidx.compose.foundation.shape.CircleShape).background(c).clickable { onHighlight(name, whole); onDismiss() })
+                }
+            }
+            TextButton(onClick = { whole = !whole }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                Text(if (whole) "Выделять предложение" else "Выделять весь абзац", fontSize = 13.sp) }
             listOf<Pair<String, () -> Unit>>(
                 "Копировать предложение" to { clip.setText(AnnotatedString(sentence)); android.widget.Toast.makeText(ctx, "Скопировано", android.widget.Toast.LENGTH_SHORT).show() },
                 "Поделиться цитатой" to {
@@ -707,4 +788,121 @@ fun sentenceAt(t: ChapterText, pos: Double): String {
     var a = ti; while (a > 0 && !ends(para[a - 1].word)) a--
     var b = ti; while (b < para.size - 1 && !ends(para[b].word)) b++
     return para.subList(a, b + 1).joinToString(" ") { it.word }.take(300)
+}
+
+/** What was long-pressed: the word, its sentence (tokens a..b) in paragraph p, and the whole paragraph. */
+data class WordHit(val word: String, val sentence: String, val p: Int, val a: Int, val b: Int, val pos: Double, val paragraph: String, val lastTok: Int)
+
+// ---------------- highlights list + export ----------------
+@Composable
+fun HighlightsScreen(nav: NavController, key: String) {
+    val ctx = LocalContext.current
+    val app = ctx.app()
+    val st by app.store.state.collectAsState()
+    val book = remember(key) { app.repo.book(key) } ?: return
+    val list = st.highlights[key].orEmpty()
+    var editing by remember { mutableStateOf<io.github.notoboto.unison.data.Highlight?>(null) }
+    fun markdown(): String = buildString {
+        append("# ${book.meta.title}\n"); book.meta.author?.let { append("*$it*\n") }; append("\n")
+        list.groupBy { it.n }.forEach { (n, hs) ->
+            append("## ${book.chapters.find { it.n == n }?.title ?: "Глава $n"}\n\n")
+            hs.forEach { h -> append("> ${h.text}\n\n"); if (h.note.isNotBlank()) append("${h.note}\n\n") }
+        }
+    }
+    val save = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/markdown")) { uri ->
+        uri?.let { u -> runCatching { ctx.contentResolver.openOutputStream(u, "wt")!!.use { it.write(markdown().toByteArray()) } } }
+    }
+    Scaffold(topBar = { BackBar(nav, "Выделения") {
+        if (list.isNotEmpty()) {
+            IconButton(onClick = { ctx.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND)
+                .setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, markdown()), null)) }) { Icon(Icons.Filled.Share, "Поделиться") }
+            IconButton(onClick = { save.launch(book.shortTitle + " — выделения.md") }) { Icon(Icons.Filled.Save, "Сохранить .md") }
+        }
+    } }) { pad ->
+        if (list.isEmpty()) EmptyState("🖍", "Выделений пока нет.\nДолгое нажатие на слово в тексте → выберите цвет.", Modifier.padding(pad))
+        else LazyColumn(Modifier.padding(pad)) {
+            list.groupBy { it.n }.forEach { (n, hs) ->
+                item(key = "h$n") { GroupHeader(book.chapters.find { it.n == n }?.let { chName(it, st.settings.fullTitles) } ?: "Глава $n") }
+                items(hs, key = { "${it.n}:${it.p}:${it.a}:${it.ts}" }) { h ->
+                    Row(Modifier.fillMaxWidth().clickable {
+                        app.player.open(book, h.n, autoplay = false); app.player.seekTo(h.pos); nav.navigate("reader/$key/${h.n}")
+                    }.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        Box(Modifier.padding(top = 4.dp).size(width = 4.dp, height = 40.dp).background(HL_COLORS[h.color] ?: HL))
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(h.text, maxLines = 6, overflow = TextOverflow.Ellipsis, fontSize = 15.sp)
+                            if (h.note.isNotBlank()) Text(h.note, color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+                        }
+                        IconButton(onClick = { editing = h }) { Icon(Icons.Filled.Edit, "Заметка") }
+                        IconButton(onClick = { app.store.removeHighlight(key, h) }) { Icon(Icons.Filled.Delete, "Удалить") }
+                    }
+                }
+            }
+        }
+    }
+    editing?.let { h -> NameDialog("Заметка", h.note, { editing = null }) { app.store.editHighlight(key, h, it); editing = null } }
+}
+
+/** Glossary entry for a word (by term or alias stem), only if it was already introduced by chapter [n] — no spoilers. */
+fun lookupGlossary(list: List<io.github.notoboto.unison.data.GlossaryEntry>, word: String, n: Int): io.github.notoboto.unison.data.GlossaryEntry? {
+    fun norm(x: String) = x.lowercase().replace('ё', 'е').trim { !it.isLetterOrDigit() }
+    val w = norm(word)
+    if (w.length < 3) return null
+    // Russian endings: compare stems (drop up to 2 trailing letters on longer words)
+    fun stem(x: String) = norm(x).let { if (it.length > 5) it.dropLast(2) else if (it.length > 4) it.dropLast(1) else it }
+    val ws = stem(w)
+    data class Hit(val e: io.github.notoboto.unison.data.GlossaryEntry, val score: Int)
+    val hits = list.filter { it.since <= n }.mapNotNull { e ->
+        val names = listOf(e.term) + e.aliases
+        var best = 0
+        for (nm in names) {
+            val parts = nm.trim().split(' ').map { norm(it) }.filter { it.length >= 3 }
+            val single = parts.size == 1
+            // first word (Драко) or, for people, the surname (Малфой)
+            for (part in listOfNotNull(parts.firstOrNull(), parts.lastOrNull().takeIf { e.kind == "персонаж" && !single })) {
+                when {
+                    part == w -> best = maxOf(best, if (single) 4 else 3)
+                    stem(part) == ws || (ws.length >= 4 && part.startsWith(ws)) || (stem(part).length >= 4 && w.startsWith(stem(part))) ->
+                        best = maxOf(best, if (single) 2 else 1)
+                }
+            }
+        }
+        if (best == 0) null else Hit(e, best * 1000 + (if (e.kind == "персонаж") 200 else 0) - e.since)
+    }
+    return hits.maxByOrNull { it.score }?.takeIf { it.score >= 1000 }?.e
+}
+
+// ---------------- glossary ----------------
+@Composable
+fun GlossaryScreen(nav: NavController, key: String) {
+    val app = LocalContext.current.app()
+    val st by app.store.state.collectAsState()
+    val book = remember(key) { app.repo.book(key) } ?: return
+    var list by remember { mutableStateOf<List<io.github.notoboto.unison.data.GlossaryEntry>?>(null) }
+    var q by remember { mutableStateOf("") }
+    var all by remember { mutableStateOf(false) }
+    LaunchedEffect(key) { list = app.repo.glossary(book) }
+    // no spoilers: only what appeared up to the furthest chapter you opened
+    val reach = maxOf(st.progress[key].orEmpty().keys.maxOrNull() ?: 0, st.last[key] ?: 0)
+    Scaffold(topBar = { BackBar(nav, "Глоссарий") }) { pad ->
+        val l = list
+        if (l == null) EmptyState("⏳", "Загружаю…", Modifier.padding(pad))
+        else if (l.isEmpty()) EmptyState("📖", "Для этой книги глоссария нет.", Modifier.padding(pad))
+        else LazyColumn(Modifier.padding(pad)) {
+            item {
+                OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().padding(16.dp), singleLine = true, placeholder = { Text("Поиск") })
+                Row(Modifier.fillMaxWidth().clickable { all = !all }.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Показывать всё, включая будущие главы (спойлеры)", Modifier.weight(1f), fontSize = 14.sp)
+                    Switch(all, { all = it })
+                }
+            }
+            val shown = l.filter { all || it.since <= reach }.filter { q.isBlank() || (listOf(it.term) + it.aliases).any { a -> a.contains(q, true) } || it.short.contains(q, true) }
+                .sortedBy { it.term.lowercase() }
+            items(shown, key = { it.term + it.since }) { e ->
+                ListItem(headlineContent = { Text(e.term, fontWeight = FontWeight.Medium) },
+                    overlineContent = { Text(listOfNotNull(e.kind.ifBlank { null }, "с главы ${e.since}").joinToString(" · ")) },
+                    supportingContent = { Text(e.short + if (e.aliases.isNotEmpty()) "\nТакже: " + e.aliases.joinToString(", ") else "") })
+            }
+        }
+    }
 }

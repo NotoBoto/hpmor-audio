@@ -61,12 +61,14 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
     override suspend fun doWork(): Result {
         val key = inputData.getString("key")!!; val id = inputData.getString("id")!!; val n = inputData.getInt("n", 0)
         runCatching { setForeground(foreground(0f)) }
-        val tts = runCatching { initTts() }.getOrElse { return Result.failure() }
+        val s0 = app.store.s.settings
+        val usePiper = s0.ttsEngine == "piper" && io.github.notoboto.unison.data.Piper.installed(applicationContext, s0.piperNarrator)
+        val tts = if (usePiper) null else runCatching { initTts() }.getOrElse { return Result.failure() }
         try {
             val s = app.store.s.settings
-            tts.language = Locale.forLanguageTag(s.ttsLang)
-            tts.setSpeechRate(s.ttsRate); tts.setPitch(s.ttsPitch)
-            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            tts?.language = Locale.forLanguageTag(s.ttsLang)
+            tts?.setSpeechRate(s.ttsRate); tts?.setPitch(s.ttsPitch)
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(u: String?) {}
                 override fun onDone(u: String?) { waiting.remove(u)?.complete(true) }
                 @Deprecated("old api") override fun onError(u: String?) { waiting.remove(u)?.complete(false) }
@@ -74,17 +76,50 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
             })
             val ch = Local.chapterParas(applicationContext, id, n)
             val pieces = listOf(ch.title) + ch.paras
+            val speakers = io.github.notoboto.unison.data.Speakers.State()
+            fun voiceOf(k: io.github.notoboto.unison.data.Speakers.Kind) = when {
+                !s.piperRoles -> s.piperNarrator
+                k == io.github.notoboto.unison.data.Speakers.Kind.FEMALE && io.github.notoboto.unison.data.Piper.installed(applicationContext, s.piperFemale) -> s.piperFemale
+                k == io.github.notoboto.unison.data.Speakers.Kind.MALE && io.github.notoboto.unison.data.Piper.installed(applicationContext, s.piperMale) -> s.piperMale
+                else -> s.piperNarrator
+            }
             val pcm = ByteArrayOutputStream(); var sr = 0
             val parasJson = buildJsonArray {
                 var t = 0.0
                 pieces.forEachIndexed { pi, para ->
+                    if (usePiper) {
+                        // Piper: segment by speaker, each with its own voice; timings per segment
+                        val segs = if (pi == 0) listOf(io.github.notoboto.unison.data.Speakers.Seg(para, io.github.notoboto.unison.data.Speakers.Kind.NARRATOR))
+                            else io.github.notoboto.unison.data.Speakers.split(para, speakers)
+                        val toks = mutableListOf<Triple<String, Double, Int>>()
+                        for (sg in segs) {
+                            val (rate, samples) = io.github.notoboto.unison.data.Piper.speak(applicationContext, voiceOf(sg.kind), sg.text, s.ttsRate)
+                            if (sr == 0) sr = rate
+                            val bytes = ByteArray(samples.size * 2)
+                            samples.forEachIndexed { k, v -> bytes[2 * k] = (v.toInt() and 0xff).toByte(); bytes[2 * k + 1] = (v.toInt() shr 8).toByte() }
+                            pcm.write(bytes)
+                            val dur = samples.size.toDouble() / rate
+                            val ws = sg.text.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                            val wts = ws.map { (it.count { c -> c.isLetterOrDigit() } + 1).toDouble() }; val tot = wts.sum().coerceAtLeast(1.0)
+                            var acc = 0.0
+                            val role = when (sg.kind) { io.github.notoboto.unison.data.Speakers.Kind.NARRATOR -> 0; io.github.notoboto.unison.data.Speakers.Kind.MALE -> 1; else -> 2 }
+                            ws.forEachIndexed { k, w -> toks += Triple(w, t + dur * acc / tot, role); acc += wts[k] }
+                            t += dur
+                            val gapS = ByteArray((0.18 * rate).toInt() * 2); pcm.write(gapS); t += 0.18
+                        }
+                        val gap = ByteArray(((if (pi == 0) 0.8 else 0.3) * sr).toInt() * 2); pcm.write(gap); t += gap.size / 2.0 / sr
+                        add(buildJsonArray { toks.forEach { (w, tt, r) -> add(buildJsonArray { add(JsonPrimitive(w)); add(JsonPrimitive(Math.round(tt * 100) / 100.0)); add(JsonPrimitive(r)) }) } })
+                        setProgress(Data.Builder().putFloat("p", (pi + 1f) / pieces.size).build())
+                        if (pi % 5 == 0) runCatching { setForeground(foreground((pi + 1f) / pieces.size)) }
+                        return@forEachIndexed
+                    }
                     val words = para.split(Regex("\\s+")).filter { it.isNotEmpty() }
                     var paraStart = t; var paraDur = 0.0
                     for (part in splitLong(para)) {
                         val f = File(applicationContext.cacheDir, "tts_${key}_$n.wav")
                         val done = CompletableDeferred<Boolean>(); val uid = "u$pi-${part.hashCode()}"
                         waiting[uid] = done
-                        tts.synthesizeToFile(part, null, f, uid)
+                        tts!!.synthesizeToFile(part, null, f, uid)
                         if (!done.await()) error("synthesis failed")
                         val (rate, data) = readWav(f)
                         if (sr == 0) sr = rate
@@ -112,7 +147,7 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
             val audio = File(applicationContext.cacheDir, "tts_${key}_$n.m4a")
             withContext(Dispatchers.Default) { encodeAac(pcm.toByteArray(), sr, audio) }
             val chJson = buildJsonObject {
-                put("n", n); put("title", ch.title); put("roles", buildJsonArray { add(JsonPrimitive("Рассказчик")) })
+                put("n", n); put("title", ch.title); put("roles", buildJsonArray { add(JsonPrimitive("Рассказчик")); if (usePiper) { add(JsonPrimitive("Мужской голос")); add(JsonPrimitive("Женский голос")) } })
                 put("paras", parasJson); put("duration", Math.round(duration * 10) / 10.0)
             }
             val files = app.repo.files
@@ -125,7 +160,7 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
         } catch (e: Exception) {
             if (!isStopped) app.downloads.finished(ok = false)
             return Result.failure()
-        } finally { tts.shutdown() }
+        } finally { tts?.shutdown(); if (usePiper) io.github.notoboto.unison.data.Piper.releaseAll() }
     }
 
     /** synthesizeToFile has an input limit (~4000 chars): split long paragraphs at sentence ends. */

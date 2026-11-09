@@ -112,6 +112,10 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
     }
 
     val now = MutableStateFlow<NowPlaying?>(null)
+    /** text of the current chapter (for live subtitles) and the sentence being spoken */
+    private var curText: io.github.notoboto.unison.data.ChapterText? = null
+    val sentence = MutableStateFlow("")
+    private var lastSubtitleAt = 0L
     val isPlaying = MutableStateFlow(false)
     val position = MutableStateFlow(0.0)      // seconds, updated ~5x/s while playing
     val speed = MutableStateFlow(app.store.s.settings.speed)
@@ -120,8 +124,38 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
     private var sleepJob: Job? = null
     private var tickJob: Job? = null
 
+    private var enhancer: android.media.audiofx.LoudnessEnhancer? = null
+    /** skip long pauses + make quiet voices louder (settings) */
+    fun applySound() {
+        val s = app.store.s.settings
+        exo.skipSilenceEnabled = s.skipSilence
+        runCatching {
+            if (s.voiceBoost > 0) {
+                if (enhancer == null) enhancer = android.media.audiofx.LoudnessEnhancer(exo.audioSessionId)
+                enhancer!!.setTargetGain(s.voiceBoost * 100); enhancer!!.enabled = true
+            } else enhancer?.enabled = false
+        }
+    }
+
+    /** start / continue when headphones or a Bluetooth audio device connects (setting) */
+    fun watchHeadphones() {
+        val am = ctx.getSystemService(android.media.AudioManager::class.java) ?: return
+        val startedAt = System.currentTimeMillis()
+        val kinds = setOf(android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, android.media.AudioDeviceInfo.TYPE_USB_HEADSET) +
+            (if (android.os.Build.VERSION.SDK_INT >= 31) setOf(android.media.AudioDeviceInfo.TYPE_BLE_HEADSET) else emptySet())
+        am.registerAudioDeviceCallback(object : android.media.AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(added: Array<out android.media.AudioDeviceInfo>) {
+                if (System.currentTimeMillis() - startedAt < 3000) return          // already connected at app start
+                if (!app.store.s.settings.autoStartHeadphones || isPlaying.value) return
+                if (added.any { it.isSink && it.type in kinds }) scope.launch { delay(1200); toggleOrResume() }
+            }
+        }, android.os.Handler(android.os.Looper.getMainLooper()))
+    }
+
     init {
         exo.playbackParameters = exo.playbackParameters.withSpeed(speed.value)
+        scope.launch { app.store.state.collect { applySound() } }
         exo.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying.value = playing
@@ -145,6 +179,7 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
             var lastStat = System.currentTimeMillis()
             while (isActive) {
                 position.value = active.currentPosition / 1000.0
+                updateSubtitle()
                 if (++k % 25 == 0) {
                     saveNow()
                     val t = System.currentTimeMillis()
@@ -154,6 +189,23 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
                 delay(200)
             }
         }
+    }
+
+    /** Live subtitles: the sentence being spoken goes into the notification ("artist" line) and the big widget. */
+    private fun updateSubtitle() {
+        val t = curText ?: return
+        val s = io.github.notoboto.unison.ui.sentenceAt(t, position.value)
+        if (s == sentence.value) return
+        sentence.value = s
+        val now0 = System.currentTimeMillis()
+        if (now0 - lastSubtitleAt < 1200) return
+        lastSubtitleAt = now0
+        if (app.store.s.settings.liveSubtitles && !casting.value && exo.mediaItemCount > 0) {
+            val cur = exo.currentMediaItem ?: return
+            val meta = cur.mediaMetadata.buildUpon().setArtist(s.take(160)).build()
+            runCatching { exo.replaceMediaItem(0, cur.buildUpon().setMediaMetadata(meta).build()) }
+        }
+        Widgets.update(ctx)
     }
 
     fun saveNow() {
@@ -173,6 +225,8 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
                 .setArtworkUri(b.coverUrl?.let(Uri::parse)).setIsPlayable(true).setIsBrowsable(false).build()).build()
         now.value = NowPlaying(b, n, ch.title, ch.duration)
         applyBookSpeed(b.key)
+        curText = null; sentence.value = ""
+        scope.launch { curText = runCatching { app.repo.chapterText(b, n) }.getOrNull() }
         position.value = start
         app.store.opened(b.key, n)
         app.downloads.autoAhead(b, n)
@@ -183,7 +237,7 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
     /** Load a chapter; continue from saved position unless it was finished. */
     fun open(b: Book, n: Int, autoplay: Boolean) {
         if (now.value?.book?.key == b.key && now.value?.n == n && exo.mediaItemCount > 0) { if (autoplay) play(); return }
-        if (b.source.url == io.github.notoboto.unison.data.LOCAL_URL && !app.store.isDownloaded(b.key, n)) {
+        if (b.source.url == io.github.notoboto.unison.data.LOCAL_URL && !app.store.isDownloaded(b.key, n) && !io.github.notoboto.unison.data.Local.isAudio(ctx, b.meta.id)) {
             resolve(b, n); exo.clearMediaItems(); return       // text only until the chapter is voiced
         }
         val (item, start) = resolve(b, n) ?: return
@@ -331,3 +385,5 @@ class AutoLibrary(private val app: UnisonApp) : MediaLibrarySession.Callback {
             else MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, startPositionMs))
     }
 }
+
+private fun PlayerController.noop() = Unit

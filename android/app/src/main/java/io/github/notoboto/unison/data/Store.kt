@@ -17,7 +17,7 @@ val json = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefault
 
 /** All user state in one JSON file; every change is persisted (debounced). */
 class Store(context: Context, scope: CoroutineScope) {
-    private val file = File(context.filesDir, "state.json")
+    private val file = File(context.filesDir, Profiles.stateFile(context))
     private val _state = MutableStateFlow(load())
     val state: StateFlow<AppState> = _state
     val s: AppState get() = _state.value
@@ -71,6 +71,14 @@ class Store(context: Context, scope: CoroutineScope) {
         st.copy(statsDays = st.statsDays + (day to ((st.statsDays[day] ?: 0) + ms)),
             statsBooks = st.statsBooks + (book to ((st.statsBooks[book] ?: 0) + ms)))
     }
+    fun addHighlight(book: String, h: Highlight) = update { st ->
+        st.copy(highlights = st.highlights + (book to (st.highlights[book].orEmpty().filterNot { it.n == h.n && it.p == h.p && it.a == h.a && it.b == h.b } + h)
+            .sortedWith(compareBy({ it.n }, { it.p }, { it.a }))))
+    }
+    fun removeHighlight(book: String, h: Highlight) = update { st -> st.copy(highlights = st.highlights + (book to (st.highlights[book].orEmpty() - h))) }
+    fun editHighlight(book: String, h: Highlight, note: String) = update { st ->
+        st.copy(highlights = st.highlights + (book to st.highlights[book].orEmpty().map { if (it == h) it.copy(note = note) else it }))
+    }
     fun addBookmark(book: String, b: Bookmark) = update { st -> st.copy(bookmarks = st.bookmarks + (book to (st.bookmarks[book].orEmpty() + b).sortedWith(compareBy({ it.n }, { it.pos })))) }
     fun removeBookmark(book: String, b: Bookmark) = update { st -> st.copy(bookmarks = st.bookmarks + (book to (st.bookmarks[book].orEmpty() - b))) }
     fun editBookmark(book: String, b: Bookmark, note: String) = update { st ->
@@ -87,5 +95,30 @@ class Store(context: Context, scope: CoroutineScope) {
     }
     fun unmarkDownloaded(book: String, n: Int) = update { st ->
         st.copy(downloaded = st.downloaded + (book to (st.downloaded[book].orEmpty() - n)))
+    }
+}
+
+/** Several people on one phone: each profile has its own state file (library, progress, settings). Downloads are shared. */
+object Profiles {
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("profiles", Context.MODE_PRIVATE)
+    fun list(ctx: Context): List<String> = prefs(ctx).getString("list", null)?.split('\u0001')?.filter { it.isNotBlank() } ?: listOf("Основной")
+    fun current(ctx: Context): String = prefs(ctx).getString("current", "Основной")!!
+    fun stateFile(ctx: Context): String = list(ctx).indexOf(current(ctx)).let { if (it <= 0) "state.json" else "state_p$it.json" }
+    fun add(ctx: Context, name: String) { val l = list(ctx); if (name !in l) prefs(ctx).edit().putString("list", (l + name).joinToString("\u0001")).apply() }
+    fun remove(ctx: Context, name: String) {
+        val l = list(ctx); val i = l.indexOf(name); if (i <= 0) return
+        File(ctx.filesDir, "state_p$i.json").delete()
+        // keep file indexes stable for the others: rename the ones after it
+        for (j in i + 1 until l.size) File(ctx.filesDir, "state_p$j.json").renameTo(File(ctx.filesDir, "state_p${j - 1}.json"))
+        prefs(ctx).edit().putString("list", (l - name).joinToString("\u0001")).apply()
+        if (current(ctx) == name) prefs(ctx).edit().putString("current", "Основной").apply()
+    }
+    /** switch and restart the process so every component reloads its state */
+    fun switchTo(activity: android.app.Activity, name: String) {
+        prefs(activity).edit().putString("current", name).commit()
+        val i = activity.packageManager.getLaunchIntentForPackage(activity.packageName)!!
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        activity.startActivity(i)
+        Runtime.getRuntime().exit(0)
     }
 }

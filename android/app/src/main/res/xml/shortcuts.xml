@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="resume" android:enabled="true" android:icon="@drawable/ic_w_play"
+        android:shortcutShortLabel="@string/sc_resume" android:shortcutLongLabel="@string/sc_resume">
+        <intent android:action="io.github.notoboto.unison.RESUME" android:targetPackage="io.github.notoboto.unison" android:targetClass="io.github.notoboto.unison.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="sleep30" android:enabled="true" android:icon="@drawable/ic_notification"
+        android:shortcutShortLabel="@string/sc_sleep" android:shortcutLongLabel="@string/sc_sleep">
+        <intent android:action="io.github.notoboto.unison.SLEEP30" android:targetPackage="io.github.notoboto.unison" android:targetClass="io.github.notoboto.unison.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="car" android:enabled="true" android:icon="@drawable/ic_notification"
+        android:shortcutShortLabel="@string/sc_car" android:shortcutLongLabel="@string/sc_car">
+        <intent android:action="io.github.notoboto.unison.CAR" android:targetPackage="io.github.notoboto.unison" android:targetClass="io.github.notoboto.unison.MainActivity" />
+    </shortcut>
+</shortcuts>

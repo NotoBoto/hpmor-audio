@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -305,6 +306,18 @@ fun BrowseScreen(nav: NavController) {
     var removing by remember { mutableStateOf<Source?>(null) }
     val snack = remember { SnackbarHostState() }
     val ctx = LocalContext.current
+    val audioLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) scope.launch {
+            runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { io.github.notoboto.unison.data.Local.importAudio(ctx, uris) } }
+                .onSuccess { m ->
+                    app.repo.reloadLocal()
+                    val k = bookKey(io.github.notoboto.unison.data.LOCAL_URL, m.id)
+                    app.repo.book(k)?.chapters?.forEach { app.store.markDownloaded(k, it.n, "audio") }
+                    app.store.update { s -> s.copy(library = s.library + io.github.notoboto.unison.data.LibEntry(io.github.notoboto.unison.data.LOCAL_URL, m.id)) }
+                    nav.navigate("book/$k")
+                }.onFailure { snack.showSnackbar("Не удалось открыть файлы: ${it.message}") }
+        }
+    }
     val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { u -> scope.launch {
             val r = runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { io.github.notoboto.unison.data.Local.import(ctx, u) } }
@@ -345,6 +358,9 @@ fun BrowseScreen(nav: NavController) {
                 ListItem(headlineContent = { Text("Импортировать книгу") }, supportingContent = { Text("EPUB, FB2 или TXT с телефона — озвучка синтезатором речи") },
                     leadingContent = { Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.primary) },
                     modifier = Modifier.clickable { importLauncher.launch(arrayOf("application/epub+zip", "application/x-fictionbook+xml", "text/plain", "application/octet-stream", "*/*")) })
+                ListItem(headlineContent = { Text("Импортировать аудиокнигу") }, supportingContent = { Text("MP3, M4B, M4A, OGG — один или несколько файлов, без текста") },
+                    leadingContent = { Icon(Icons.Filled.Headphones, null, tint = MaterialTheme.colorScheme.primary) },
+                    modifier = Modifier.clickable { audioLauncher.launch(arrayOf("audio/*")) })
                 val local = catalogs[io.github.notoboto.unison.data.LOCAL_URL].orEmpty()
                 if (local.isNotEmpty()) ListItem(headlineContent = { Text("На телефоне") }, supportingContent = { Text("Импортированные книги: ${local.size}") },
                     leadingContent = { Icon(Icons.Filled.PhoneAndroid, null, tint = MaterialTheme.colorScheme.primary) },

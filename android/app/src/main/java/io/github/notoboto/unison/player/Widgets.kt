@@ -20,6 +20,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Home-screen player widget: cover, chapter, rewind / play-pause / forward. */
+/** Large widget: the same controls plus the sentence being spoken. */
+class PlayerWidgetBig : AppWidgetProvider() {
+    override fun onUpdate(ctx: Context, mgr: AppWidgetManager, ids: IntArray) = Widgets.update(ctx)
+}
+
 class PlayerWidget : AppWidgetProvider() {
     override fun onUpdate(ctx: Context, mgr: AppWidgetManager, ids: IntArray) = Widgets.update(ctx)
 
@@ -49,13 +54,19 @@ object Widgets {
 
     fun update(ctx: Context) {
         val mgr = AppWidgetManager.getInstance(ctx)
-        val ids = mgr.getAppWidgetIds(ComponentName(ctx, PlayerWidget::class.java))
+        render(ctx, mgr, mgr.getAppWidgetIds(ComponentName(ctx, PlayerWidget::class.java)), R.layout.widget_player)
+        render(ctx, mgr, mgr.getAppWidgetIds(ComponentName(ctx, PlayerWidgetBig::class.java)), R.layout.widget_player_big)
+        TileService.requestListeningState(ctx, ComponentName(ctx, PlayerTile::class.java))
+    }
+
+    private fun render(ctx: Context, mgr: AppWidgetManager, ids: IntArray, layout: Int) {
         val app = ctx.app()
         val np = app.player.now.value
         val playing = app.player.isPlaying.value
         val wantCover = np?.book?.coverSmUrl
         if (ids.isNotEmpty()) {
-            val v = RemoteViews(ctx.packageName, R.layout.widget_player)
+            val v = RemoteViews(ctx.packageName, layout)
+            if (layout == R.layout.widget_player_big) v.setTextViewText(R.id.w_sentence, app.player.sentence.value.ifBlank { "▶ — продолжить слушать" })
             if (np != null) {
                 v.setTextViewText(R.id.w_title, if (app.store.s.settings.fullTitles) np.title else "Глава ${np.n}")
                 v.setTextViewText(R.id.w_sub, np.book.shortTitle)
@@ -82,7 +93,6 @@ object Widgets {
                 if (bmp != null) { coverUrl = wantCover; coverBmp = bmp; update(ctx) }
             }
         }
-        TileService.requestListeningState(ctx, ComponentName(ctx, PlayerTile::class.java))
     }
 }
 

@@ -37,6 +37,8 @@ class UnisonApp : Application() {
         player = PlayerController(this, this, scope)
         updater = Updater(this)
         scheduleAutoBackup(this)
+        Habits.schedule(this)
+        player.watchHeadphones()
     }
 }
 

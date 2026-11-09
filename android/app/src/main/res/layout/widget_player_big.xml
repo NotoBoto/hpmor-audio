@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/w_root" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="12dp" android:background="@drawable/widget_bg">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+        <ImageView android:id="@+id/w_cover" android:layout_width="44dp" android:layout_height="62dp" android:scaleType="centerCrop"
+            android:src="@drawable/ic_launcher_fg" android:contentDescription="Обложка" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:paddingStart="10dp">
+            <TextView android:id="@+id/w_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFEFE6F1"
+                android:textSize="14sp" android:maxLines="1" android:ellipsize="end" android:text="Unison" />
+            <TextView android:id="@+id/w_sub" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#FFA79BAD"
+                android:textSize="12sp" android:maxLines="1" android:ellipsize="end" android:text="" />
+        </LinearLayout>
+        <ImageButton android:id="@+id/w_rew" android:layout_width="40dp" android:layout_height="40dp" android:background="@null" android:src="@drawable/ic_w_rew" android:contentDescription="Назад" />
+        <ImageButton android:id="@+id/w_play" android:layout_width="44dp" android:layout_height="44dp" android:background="@drawable/widget_play_bg" android:src="@drawable/ic_w_play" android:contentDescription="Играть" />
+        <ImageButton android:id="@+id/w_fwd" android:layout_width="40dp" android:layout_height="40dp" android:background="@null" android:src="@drawable/ic_w_fwd" android:contentDescription="Вперёд" />
+    </LinearLayout>
+    <TextView android:id="@+id/w_sentence" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:layout_marginTop="8dp" android:textColor="#FFEFE6F1" android:textSize="16sp" android:lineSpacingMultiplier="1.15"
+        android:ellipsize="end" android:maxLines="5" android:gravity="center_vertical" android:text="Здесь будет звучащая фраза" />
+</LinearLayout>

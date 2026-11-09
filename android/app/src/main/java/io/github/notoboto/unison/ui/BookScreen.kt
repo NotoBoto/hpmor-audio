@@ -222,7 +222,9 @@ fun BookScreen(nav: NavController, key: String) {
                             val old = app.downloads.outdated(listOf(book)).size
                             DropdownMenuItem({ Text("Обновить скачанные ($old)") }, { menu = false; app.downloads.updateOutdated(listOf(book)) }, enabled = old > 0)
                             DropdownMenuItem({ Text("Закладки (${marks.size})") }, { menu = false; nav.navigate("bookmarks/$key") })
+                            DropdownMenuItem({ Text("Выделения (${st.highlights[key].orEmpty().size})") }, { menu = false; nav.navigate("highlights/$key") })
                             DropdownMenuItem({ Text("Действующие лица") }, { menu = false; nav.navigate("characters/$key") })
+                            DropdownMenuItem({ Text("Глоссарий") }, { menu = false; nav.navigate("glossary/$key") })
                             DropdownMenuItem({ Text("Поиск по книге") }, { menu = false; nav.navigate("search/$key") })
                             DropdownMenuItem({ Text("Категории…") }, { menu = false; catDialog = true })
                             DropdownMenuItem({ Text("Изменить…") }, { menu = false; editDialog = true })

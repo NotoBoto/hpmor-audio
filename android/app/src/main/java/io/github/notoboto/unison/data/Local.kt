@@ -46,6 +46,45 @@ object Local {
         return ChapterText(n, c.title, listOf("Рассказчик"), paras, est)
     }
 
+    // ---------------- audiobook files (no text) ----------------
+    @Serializable data class AudioFile(val uri: String, val title: String, val duration: Double)
+
+    fun audioFiles(ctx: Context, id: String): List<AudioFile> = runCatching {
+        json.decodeFromString(ListSerializer(AudioFile.serializer()), File(bookDir(ctx, id), "audio.json").readText())
+    }.getOrDefault(emptyList())
+    fun isAudio(ctx: Context, id: String) = File(bookDir(ctx, id), "audio.json").exists()
+
+    fun importAudio(ctx: Context, uris: List<Uri>): BookMeta {
+        require(uris.isNotEmpty())
+        val files = uris.map { u ->
+            runCatching { ctx.contentResolver.takePersistableUriPermission(u, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            val mmr = android.media.MediaMetadataRetriever()
+            val (title, dur, album, artist, art) = runCatching {
+                mmr.setDataSource(ctx, u)
+                listOf(mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE),
+                    mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION),
+                    mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM),
+                    mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST), null)
+            }.getOrDefault(listOf(null, null, null, null, null))
+            val name = android.provider.OpenableColumns.DISPLAY_NAME.let { col ->
+                ctx.contentResolver.query(u, arrayOf(col), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            } ?: u.lastPathSegment.orEmpty()
+            Triple(AudioFile(u.toString(), title ?: name.substringBeforeLast('.'), (dur?.toDoubleOrNull() ?: 0.0) / 1000), album, artist) to (runCatching { mmr.embeddedPicture }.getOrNull().also { mmr.release() })
+        }.sortedBy { it.first.first.title.lowercase().padStart(1) }
+        val sorted = files.sortedWith(compareBy { f -> Regex("\\d+").find(f.first.first.title)?.value?.padStart(6, '0') ?: f.first.first.title })
+        val id = "a" + System.currentTimeMillis().toString(36)
+        val d = bookDir(ctx, id)
+        File(d, "audio.json").writeText(json.encodeToString(ListSerializer(AudioFile.serializer()), sorted.map { it.first.first }))
+        val coverPath = sorted.firstNotNullOfOrNull { it.second }?.let { File(d, "cover.jpg").apply { writeBytes(it) }.toURI().toString() }
+        val first = sorted.first().first
+        val meta = BookMeta(id = id, title = first.second ?: first.first.title, author = first.third, cover = coverPath, coverSm = coverPath, data = "",
+            total = sorted.size, tags = listOf("Аудиокнига"), description = "Импортированная аудиокнига (${sorted.size} файл.). Текста нет — только плеер.")
+        File(d, "meta.json").writeText(json.encodeToString(BookMeta.serializer(), meta))
+        saveIndex(ctx, id, sorted.mapIndexed { i, f -> ChapterMeta(i + 1, f.first.first.title, f.first.first.duration, 0, "audio", null) })
+        sorted.forEachIndexed { i, f -> File(d, "t%03d.json".format(i + 1)).writeText(json.encodeToString(LocalChapter.serializer(), LocalChapter(f.first.first.title, emptyList()))) }
+        return meta
+    }
+
     // ---------------- import ----------------
     data class Parsed(val title: String, val author: String?, val chapters: List<LocalChapter>, val cover: ByteArray?)
 

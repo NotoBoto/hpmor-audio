@@ -111,6 +111,26 @@ data class Settings(
     val ttsRate: Float = 1.0f,
     val ttsPitch: Float = 1.0f,
     val ttsLang: String = "ru-RU",
+    val ttsEngine: String = "system",    // system | piper
+    val piperNarrator: String = "dmitri",
+    val piperMale: String = "ruslan",
+    val piperFemale: String = "irina",
+    val piperRoles: Boolean = true,      // different voices for dialogue
+    val liveSubtitles: Boolean = true,   // current sentence in the notification / big widget
+    // habits
+    val goalMin: Int = 0,                // daily listening goal, 0 = off
+    val reminderOn: Boolean = false,
+    val reminderAt: Int = 20 * 60,       // minutes of the day
+    // sound
+    val skipSilence: Boolean = false,
+    val voiceBoost: Int = 0,             // 0 = off, else gain in dB
+    val autoStartHeadphones: Boolean = false,
+    val recapAfterHours: Int = 12,       // show «Ранее в книге» after a break this long, 0 = never
+    val glossaryHints: Boolean = true,   // «Кто это?» from the glossary
+    val storageLimitGb: Int = 0,         // 0 = no limit; otherwise listened chapters are removed first
+    val appLock: Boolean = false,
+    val lockAfterMin: Int = 0,           // lock again after the app was in the background this long
+    val hideInRecents: Boolean = false,
     // where chapters are stored: null = app storage, else SAF tree uri (e.g. SD card)
     val storageUri: String? = null,
 )
@@ -120,6 +140,11 @@ data class Category(val id: Int, val name: String)
 
 @Serializable
 data class Bookmark(val n: Int, val pos: Double, val quote: String, val note: String = "", val ts: Long = System.currentTimeMillis())
+
+/** A highlighted passage: paragraph [p], tokens [a]..[b], colour name, optional note. */
+@Serializable
+data class Highlight(val n: Int, val p: Int, val a: Int, val b: Int, val color: String = "yellow", val note: String = "",
+                     val text: String = "", val pos: Double = 0.0, val ts: Long = System.currentTimeMillis())
 
 @Serializable
 data class BookEdit(val title: String? = null, val cover: String? = null)
@@ -140,6 +165,7 @@ data class AppState(
     val categories: List<Category> = emptyList(),
     val bookCategories: Map<String, List<Int>> = emptyMap(),       // bookKey -> category ids
     val bookmarks: Map<String, List<Bookmark>> = emptyMap(),       // bookKey -> bookmarks
+    val highlights: Map<String, List<Highlight>> = emptyMap(),     // bookKey -> highlights
     val edits: Map<String, BookEdit> = emptyMap(),                 // bookKey -> user edits
     val statsDays: Map<String, Long> = emptyMap(),                 // yyyy-MM-dd -> ms listened
     val statsBooks: Map<String, Long> = emptyMap(),                // bookKey -> ms listened
@@ -189,3 +215,9 @@ data class ChapterText(val n: Int, val title: String, val roles: List<String>, v
 @Serializable
 data class Character(val name: String, val voice: String = "", val narrator: Boolean = false, val chapters: List<Int> = emptyList(),
                      val lines: Int = 0, val sample: String? = null, val sampleText: String? = null)
+
+@Serializable
+data class Recap(val n: Int, val recap: String)
+
+@Serializable
+data class GlossaryEntry(val term: String, val aliases: List<String> = emptyList(), val kind: String = "", val since: Int = 0, val short: String = "")

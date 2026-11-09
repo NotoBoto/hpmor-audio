@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,11 +31,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -192,6 +195,33 @@ fun StatsScreen(nav: NavController) {
                     StatCard("Объём прослушанного", hours(doneSec), Modifier.weight(1f))
                     StatCard("Книги: начато / дослушано", "$started / $finishedBooks", Modifier.weight(1f))
                 }
+            }
+            item {
+                val goal = st.settings.goalMin
+                val today = ((st.statsDays[LocalDate.now().toString()] ?: 0L) / 60000).toInt()
+                val streak = io.github.notoboto.unison.Habits.streak(app)
+                SectionTitle("Сегодня")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(contentAlignment = Alignment.Center) {
+                        androidx.compose.material3.CircularProgressIndicator(progress = { if (goal > 0) (today.toFloat() / goal).coerceAtMost(1f) else 1f },
+                            Modifier.size(84.dp), strokeWidth = 8.dp, trackColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+                        Text(if (goal > 0) "$today/$goal" else "$today", fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    Column {
+                        Text(if (goal > 0) (if (today >= goal) "Цель на сегодня выполнена 🎉" else "Цель: $goal мин в день") else "Минут сегодня", fontWeight = FontWeight.Medium)
+                        Text("Серия: $streak ${plural(streak, "день", "дня", "дней")} подряд", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                    }
+                }
+                val ym = LocalDate.now().toString().take(7); val y = LocalDate.now().year.toString()
+                val month = st.statsDays.filterKeys { it.startsWith(ym) }.values.sum(); val year = st.statsDays.filterKeys { it.startsWith(y) }.values.sum()
+                val best = st.statsDays.maxByOrNull { it.value }
+                SectionTitle("Итоги")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    StatCard("В этом месяце", hours(month / 1000.0), Modifier.weight(1f))
+                    StatCard("В этом году", hours(year / 1000.0), Modifier.weight(1f))
+                }
+                if (best != null) Text("Рекорд: ${hours(best.value / 1000.0)} — ${best.key}", Modifier.padding(top = 8.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             item {
                 SectionTitle("Последние 14 дней")
@@ -435,5 +465,173 @@ fun CharactersScreen(nav: NavController, key: String) {
                 }
             }
         }
+    }
+}
+
+// ---------------- Piper voices ----------------
+@Composable
+fun VoicesScreen(nav: NavController) {
+    val ctx = LocalContext.current
+    val app = ctx.app()
+    val st by app.store.state.collectAsState()
+    val s = st.settings
+    val prog by io.github.notoboto.unison.data.Piper.progress.collectAsState()
+    val scope = rememberCoroutineScope()
+    val snack = remember { SnackbarHostState() }
+    var tick by remember { mutableStateOf(0) }
+    fun inst(id: String) = tick >= 0 && io.github.notoboto.unison.data.Piper.installed(ctx, id)
+    var testing by remember { mutableStateOf<String?>(null) }
+    fun set(f: (io.github.notoboto.unison.data.Settings) -> io.github.notoboto.unison.data.Settings) = app.store.settings(f)
+    Scaffold(topBar = { BackBar(nav, "Голоса для своих книг") }, snackbarHost = { SnackbarHost(snack) }) { pad ->
+        LazyColumn(Modifier.padding(pad)) {
+            item {
+                Text("Импортированные книги озвучиваются прямо на телефоне. Системный синтезатор — один голос; нейросетевые голоса Piper звучат естественнее, " +
+                    "работают без интернета и могут читать по ролям: рассказчик, мужские и женские реплики.",
+                    Modifier.padding(16.dp), fontSize = 13.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SheetTitle("Движок")
+                Choice("Системный синтезатор (Google и др.)", s.ttsEngine != "piper") { set { it.copy(ttsEngine = "system") } }
+                Choice("Нейросетевые голоса Piper", s.ttsEngine == "piper") {
+                    if (inst(s.piperNarrator)) set { it.copy(ttsEngine = "piper") } else scope.launch { snack.showSnackbar("Сначала скачайте голос рассказчика") }
+                }
+                SheetTitle("Голоса Piper")
+            }
+            items(io.github.notoboto.unison.data.Piper.voices, key = { it.id }) { v ->
+                val p = prog[v.id]
+                ListItem(headlineContent = { Text(v.title + if (v.female) " (женский)" else " (мужской)") },
+                    supportingContent = {
+                        if (p != null) LinearProgressIndicator(progress = { p }, Modifier.fillMaxWidth().padding(top = 6.dp))
+                        else Text(if (inst(v.id)) "Скачан" else "~21 МБ")
+                    },
+                    trailingContent = {
+                        Row {
+                            if (inst(v.id)) {
+                                IconButton(onClick = {
+                                    testing = v.id
+                                    scope.launch {
+                                        runCatching {
+                                            val (rate, pcm) = kotlinx.coroutines.withContext(Dispatchers.Default) {
+                                                io.github.notoboto.unison.data.Piper.speak(ctx, v.id, "Здравствуйте! Так звучит мой голос.", s.ttsRate)
+                                            }
+                                            val t = android.media.AudioTrack.Builder().setAudioFormat(android.media.AudioFormat.Builder()
+                                                .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate)
+                                                .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build())
+                                                .setBufferSizeInBytes(pcm.size * 2).setTransferMode(android.media.AudioTrack.MODE_STATIC).build()
+                                            t.write(pcm, 0, pcm.size); t.play()
+                                        }.onFailure { snack.showSnackbar("Не удалось: ${it.message}") }
+                                        testing = null
+                                    }
+                                }, enabled = testing == null) { Icon(Icons.Filled.PlayArrow, "Послушать") }
+                                IconButton(onClick = { io.github.notoboto.unison.data.Piper.delete(ctx, v.id); tick++ }) { Icon(Icons.Filled.Delete, "Удалить") }
+                            } else IconButton(onClick = {
+                                scope.launch {
+                                    runCatching { io.github.notoboto.unison.data.Piper.download(ctx, v.id, app.repo.http) }
+                                        .onSuccess { tick++ }.onFailure { snack.showSnackbar("Не удалось скачать: ${it.message}") }
+                                }
+                            }, enabled = p == null) { Icon(Icons.Filled.Download, "Скачать") }
+                        }
+                    })
+            }
+            item {
+                SheetTitle("Кто каким голосом читает")
+                val opts = io.github.notoboto.unison.data.Piper.voices.map { it.id to it.title }
+                PickRowX("Рассказчик", s.piperNarrator, opts) { v -> set { it.copy(piperNarrator = v) } }
+                Row(Modifier.fillMaxWidth().clickable { set { it.copy(piperRoles = !it.piperRoles) } }.padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Читать по ролям")
+                        Text("Реплики персонажей — отдельными голосами; пол угадывается по тексту («сказала»)", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    androidx.compose.material3.Switch(s.piperRoles, { v -> set { it.copy(piperRoles = v) } })
+                }
+                if (s.piperRoles) {
+                    PickRowX("Мужские реплики", s.piperMale, opts) { v -> set { it.copy(piperMale = v) } }
+                    PickRowX("Женские реплики", s.piperFemale, opts) { v -> set { it.copy(piperFemale = v) } }
+                }
+                Text("Уже озвученные главы не меняются: удалите главу и озвучьте заново, чтобы применить новые голоса.",
+                    Modifier.padding(16.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PickRowX(title: String, value: String, options: List<Pair<String, String>>, onPick: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    ListItem(headlineContent = { Text(title) }, supportingContent = { Text(options.find { it.first == value }?.second ?: value) },
+        modifier = Modifier.clickable { open = true })
+    if (open) AlertDialog(onDismissRequest = { open = false }, title = { Text(title) }, text = {
+        Column { options.forEach { (v, l) -> Choice(l, v == value) { onPick(v); open = false } } }
+    }, confirmButton = { TextButton(onClick = { open = false }) { Text("Закрыть") } })
+}
+
+// ---------------- car mode ----------------
+@Composable
+fun CarScreen(nav: NavController) {
+    val app = LocalContext.current.app()
+    val p = app.player
+    val now by p.now.collectAsState()
+    val playing by p.isPlaying.collectAsState()
+    val pos by p.position.collectAsState()
+    val sentence by p.sentence.collectAsState()
+    val view = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.DisposableEffect(Unit) { view.keepScreenOn = true; onDispose { view.keepScreenOn = false } }
+    Column(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black).statusBarsPadding().navigationBarsPadding().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { nav.popBackStack() }, Modifier.size(64.dp)) {
+                Icon(Icons.Filled.Close, "Выйти из режима", Modifier.size(36.dp), tint = androidx.compose.ui.graphics.Color.White)
+            }
+            Text(now?.title ?: "Нечего играть", color = androidx.compose.ui.graphics.Color.White, fontSize = 22.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f))
+        }
+        Text(sentence, Modifier.weight(1f).fillMaxWidth().padding(vertical = 16.dp), color = androidx.compose.ui.graphics.Color(0xFFDDDDDD),
+            fontSize = 26.sp, lineHeight = 34.sp, maxLines = 6, overflow = TextOverflow.Ellipsis)
+        LinearProgressIndicator(progress = { now?.let { (pos / it.duration).toFloat().coerceIn(0f, 1f) } ?: 0f }, Modifier.fillMaxWidth().height(6.dp))
+        Text(fmt(pos) + " / " + fmt(now?.duration ?: 0.0), color = androidx.compose.ui.graphics.Color.Gray, fontSize = 18.sp, modifier = Modifier.padding(vertical = 8.dp))
+        val big = Modifier.weight(1f).height(120.dp)
+        val c = MaterialTheme.colorScheme
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            androidx.compose.material3.FilledTonalButton(onClick = { p.skip(-30) }, big, shape = RoundedCornerShape(24.dp)) { Text("−30", fontSize = 28.sp) }
+            androidx.compose.material3.Button(onClick = { p.toggleOrResume() }, big, shape = RoundedCornerShape(24.dp)) {
+                Icon(if (playing) Icons.Filled.Stop else Icons.Filled.PlayArrow, null, Modifier.size(64.dp))
+            }
+            androidx.compose.material3.FilledTonalButton(onClick = { p.skip(30) }, big, shape = RoundedCornerShape(24.dp)) { Text("+30", fontSize = 28.sp) }
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            androidx.compose.material3.OutlinedButton(onClick = { p.neighbour(-1)?.let { m -> now?.let { p.open(it.book, m, true) } } }, Modifier.weight(1f).height(80.dp)) { Text("‹ Глава", fontSize = 22.sp) }
+            androidx.compose.material3.OutlinedButton(onClick = { p.neighbour(1)?.let { m -> now?.let { p.open(it.book, m, true) } } }, Modifier.weight(1f).height(80.dp)) { Text("Глава ›", fontSize = 22.sp) }
+        }
+    }
+}
+
+// ---------------- profiles ----------------
+@Composable
+fun ProfilesScreen(nav: NavController) {
+    val ctx = LocalContext.current
+    var tick by remember { mutableStateOf(0) }
+    val list = remember(tick) { io.github.notoboto.unison.data.Profiles.list(ctx) }
+    val cur = io.github.notoboto.unison.data.Profiles.current(ctx)
+    var adding by remember { mutableStateOf(false) }
+    var removing by remember { mutableStateOf<String?>(null) }
+    Scaffold(topBar = { BackBar(nav, "Профили") }, floatingActionButton = {
+        FloatingActionButton(onClick = { adding = true }) { Icon(Icons.Filled.Add, "Новый профиль") }
+    }) { pad ->
+        LazyColumn(Modifier.padding(pad)) {
+            item { Text("У каждого профиля своя библиотека, прогресс, история, закладки и настройки. Скачанные главы общие. При переключении приложение перезапустится.",
+                Modifier.padding(16.dp), fontSize = 13.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            items(list, key = { it }) { p ->
+                ListItem(headlineContent = { Text(p, fontWeight = if (p == cur) FontWeight.SemiBold else null) },
+                    supportingContent = { if (p == cur) Text("Текущий") },
+                    leadingContent = { androidx.compose.material3.RadioButton(p == cur, { if (p != cur) io.github.notoboto.unison.data.Profiles.switchTo(ctx as android.app.Activity, p) }) },
+                    trailingContent = { if (p != "Основной") IconButton(onClick = { removing = p }) { Icon(Icons.Filled.Delete, "Удалить") } },
+                    modifier = Modifier.clickable { if (p != cur) io.github.notoboto.unison.data.Profiles.switchTo(ctx as android.app.Activity, p) })
+            }
+        }
+    }
+    if (adding) NameDialog("Новый профиль", "", { adding = false }) { io.github.notoboto.unison.data.Profiles.add(ctx, it); adding = false; tick++ }
+    removing?.let { p ->
+        AlertDialog(onDismissRequest = { removing = null }, title = { Text("Удалить профиль «$p»?") }, text = { Text("Его прогресс и настройки будут удалены.") },
+            confirmButton = { TextButton(onClick = { io.github.notoboto.unison.data.Profiles.remove(ctx, p); removing = null; tick++ }) { Text("Удалить") } },
+            dismissButton = { TextButton(onClick = { removing = null }) { Text("Отмена") } })
     }
 }

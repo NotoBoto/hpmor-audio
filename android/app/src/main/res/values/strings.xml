@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Unison</string>
+    <string name="sc_resume">Продолжить</string>
+    <string name="sc_sleep">Слушать 30 минут</string>
+    <string name="sc_car">Режим «В машине»</string>
 </resources>

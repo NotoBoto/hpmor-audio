@@ -105,7 +105,24 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
 
     // ---- "downloads finished" notification ----
     private var okCount = 0; private var failCount = 0
-    @Synchronized fun finished(ok: Boolean) { if (ok) okCount++ else failCount++ }
+    @Synchronized fun finished(ok: Boolean) { if (ok) okCount++ else failCount++; if (ok) enforceLimit() }
+
+    /** Keep downloads under the limit: delete listened chapters first, oldest progress first. Never the one playing. */
+    fun enforceLimit() {
+        val gb = app.store.s.settings.storageLimitGb; if (gb <= 0) return
+        val limit = gb * 1024L * 1024 * 1024
+        var used = usedBytes(); if (used <= limit) return
+        val playing = app.player.now.value
+        val candidates = app.store.s.downloaded.flatMap { (k, m) -> m.keys.map { k to it } }
+            .filter { (k, n) -> app.store.progress(k, n).done && !(playing?.book?.key == k && playing.n == n) }
+            .sortedBy { (k, n) -> app.store.progress(k, n).ts }
+        for ((k, n) in candidates) {
+            if (used <= limit) break
+            val b = app.repo.book(k) ?: continue
+            val sz = b.chapters.find { it.n == n }?.bytes ?: 0
+            app.repo.deleteLocal(k, n); used -= sz
+        }
+    }
     init {
         scope.launch {
             var wasBusy = false
