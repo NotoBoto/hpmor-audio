@@ -24,6 +24,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.outlined.LibraryBooks
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.TimerOff
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -49,6 +57,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -289,7 +300,14 @@ private fun MiniPlayer(nav: NavHostController) {
         Column(Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)) {
             LinearProgressIndicator(progress = { (pos / np.duration).toFloat().coerceIn(0f, 1f) }, Modifier.fillMaxWidth().height(2.dp),
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHigh)
-            Row(Modifier.fillMaxWidth().clickable { nav.navigate("reader/${np.book.key}/${np.n}") }.padding(horizontal = 12.dp, vertical = 8.dp),
+            // tap = open the reader, long press = quick controls
+            var menu by remember { mutableStateOf(false) }
+            val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+            Box {
+            MiniMenu(menu, onDismiss = { menu = false })
+            Row(Modifier.fillMaxWidth().combinedClickable(onClick = { nav.navigate("reader/${np.book.key}/${np.n}") },
+                    onLongClick = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); menu = true })
+                .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Cover(np.book.coverSmUrl, Modifier.size(width = 34.dp, height = 48.dp))
                 Spacer(Modifier.width(12.dp))
@@ -300,8 +318,36 @@ private fun MiniPlayer(nav: NavHostController) {
                 IconButton(onClick = { app.player.toggle() }) {
                     Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, if (playing) "Пауза" else "Играть", Modifier.size(30.dp))
                 }
+                if (!playing) IconButton(onClick = { app.player.close() }) {
+                    Icon(Icons.Filled.Close, "Закрыть плеер", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             }
         }
+    }
+}
+
+/** Long-press menu of the mini player. Seek items keep the menu open so they can be tapped repeatedly. */
+@Composable
+private fun MiniMenu(open: Boolean, onDismiss: () -> Unit) {
+    val app = androidx.compose.ui.platform.LocalContext.current.app()
+    val s = app.store.state.collectAsState().value.settings
+    val sleep by app.player.sleep.collectAsState()
+    val p = app.player
+    androidx.compose.material3.DropdownMenu(open, onDismiss) {
+        @Composable fun item(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector, close: Boolean = true, enabled: Boolean = true, act: () -> Unit) =
+            androidx.compose.material3.DropdownMenuItem(text = { Text(text) }, leadingIcon = { Icon(icon, null) }, enabled = enabled,
+                onClick = { act(); if (close) onDismiss() })
+        item("Назад ${s.skipBack} с", Icons.Filled.Replay, close = false) { p.skip(-s.skipBack) }
+        item("Вперёд ${s.skipForward} с", Icons.Filled.FastForward, close = false) { p.skip(s.skipForward) }
+        item("Предыдущая глава", Icons.Filled.SkipPrevious, enabled = p.neighbour(-1) != null) {
+            val np = p.now.value ?: return@item; p.neighbour(-1)?.let { n -> p.open(app.repo.book(np.book.key) ?: np.book, n, autoplay = true) } }
+        item("Следующая глава", Icons.Filled.SkipNext, enabled = p.neighbour(1) != null) {
+            val np = p.now.value ?: return@item; p.neighbour(1)?.let { n -> p.open(app.repo.book(np.book.key) ?: np.book, n, autoplay = true) } }
+        if (sleep != null) item("Выключить таймер сна", Icons.Filled.TimerOff) { p.cancelSleep() }
+        else item("Таймер сна: 30 мин", Icons.Filled.Timer) { p.startSleep(30 * 60_000L) }
+        androidx.compose.material3.HorizontalDivider()
+        item("Убрать плеер", Icons.Filled.Close) { p.close() }
     }
 }
 

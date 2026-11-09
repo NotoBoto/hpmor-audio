@@ -286,6 +286,14 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
     }
     fun pause() { active.pause(); if (casting.value) pausedAt = System.currentTimeMillis() }
     fun toggle() = if (active.isPlaying) pause() else play()
+    /** Hide the mini player: save the position, stop and unload the chapter. Play from history/widget resumes it. */
+    fun close() {
+        saveNow(); active.pause()
+        if (!casting.value) { exo.stop(); exo.clearMediaItems() }
+        tickJob?.cancel(); cancelSleep()
+        now.value = null; curText = null; sentence.value = ""
+        Widgets.update(ctx)
+    }
     fun seekTo(sec: Double) { active.seekTo((sec * 1000).toLong()); position.value = sec }
     fun skip(sec: Int) = seekTo((active.currentPosition / 1000.0 + sec).coerceIn(0.0, now.value?.duration ?: 0.0))
     fun setSpeed(v: Float) {

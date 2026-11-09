@@ -69,6 +69,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.layout.onSizeChanged
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -360,30 +363,54 @@ private fun FilterCheck(label: String, checked: Boolean, onChange: (Boolean) -> 
         androidx.compose.material3.Checkbox(checked, onChange); Text(label, fontSize = 16.sp)
     }
 
-/** Mihon-like swipe on a chapter row: the action runs and the row springs back. */
+private const val SWIPE_FAR = 0.5f
+private const val SWIPE_HOLD_MS = 400L
+
+/** Mihon-like swipe on a chapter row: the action runs and the row springs back.
+ *  To avoid accidental triggers while scrolling, the row must be pulled far (SWIPE_FAR of its width) and held
+ *  there for SWIPE_HOLD_MS: the background lights up + a vibration tick tell that letting go will act. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SwipeRow(left: String, right: String, read: Boolean, downloaded: Boolean, enabled: Boolean, onAction: (String) -> Unit, content: @Composable () -> Unit) {
     if (!enabled || (left == "none" && right == "none")) { content(); return }
+    var armed by remember { mutableStateOf(false) }
+    var width by remember { mutableStateOf(0) }
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    // the swipe state keeps its first callback: read the current action/handler through State, not a stale capture
+    val act by androidx.compose.runtime.rememberUpdatedState(onAction)
+    val l by androidx.compose.runtime.rememberUpdatedState(left)
+    val r by androidx.compose.runtime.rememberUpdatedState(right)
     val state = androidx.compose.material3.rememberSwipeToDismissBoxState(confirmValueChange = { v ->
-        when (v) {
-            androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd -> onAction(right)
-            androidx.compose.material3.SwipeToDismissBoxValue.EndToStart -> onAction(left)
+        if (armed) when (v) {
+            androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd -> act(r)
+            androidx.compose.material3.SwipeToDismissBoxValue.EndToStart -> act(l)
             else -> {}
         }
+        if (v != androidx.compose.material3.SwipeToDismissBoxValue.Settled) armed = false
         false
-    }, positionalThreshold = { it * 0.3f })
-    androidx.compose.material3.SwipeToDismissBox(state, enableDismissFromStartToEnd = right != "none", enableDismissFromEndToStart = left != "none",
+    }, positionalThreshold = { it * SWIPE_FAR })
+    LaunchedEffect(state, width) {
+        androidx.compose.runtime.snapshotFlow { width > 0 && kotlin.math.abs(runCatching { state.requireOffset() }.getOrDefault(0f)) >= width * SWIPE_FAR }
+            .distinctUntilChanged()
+            .collectLatest { far ->
+                if (far) { kotlinx.coroutines.delay(SWIPE_HOLD_MS); armed = true; haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress) }
+                else armed = false
+            }
+    }
+    androidx.compose.material3.SwipeToDismissBox(state, modifier = Modifier.onSizeChanged { width = it.width },
+        enableDismissFromStartToEnd = right != "none", enableDismissFromEndToStart = left != "none",
         backgroundContent = {
             val dir = state.dismissDirection
             val action = if (dir == androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd) right else left
             val icon = when (action) { "read" -> if (read) Icons.Filled.RemoveDone else Icons.Filled.DoneAll; else -> if (downloaded) Icons.Filled.Delete else Icons.Filled.Download }
             val label = when (action) { "read" -> if (read) "Не прослушано" else "Прослушано"; else -> if (downloaded) "Удалить" else "Скачать" }
-            Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primaryContainer).padding(horizontal = 24.dp),
+            val bg by androidx.compose.animation.animateColorAsState(if (armed) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest, label = "swipe")
+            Row(Modifier.fillMaxSize().background(bg).padding(horizontal = 24.dp),
                 horizontalArrangement = if (dir == androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd) Arrangement.Start else Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = MaterialTheme.colorScheme.onPrimaryContainer); Spacer(Modifier.width(8.dp))
-                Text(label, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                val fg = if (armed) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                Icon(icon, null, tint = fg); Spacer(Modifier.width(8.dp))
+                Text(if (armed) label else "$label — подержите", color = fg)
             }
         }) { Box(Modifier.background(MaterialTheme.colorScheme.background)) { content() } }
 }
