@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.Request
 import java.io.File
 
@@ -39,6 +40,12 @@ sealed interface DlState {
 
 class Downloads(private val ctx: Context, private val app: UnisonApp, scope: CoroutineScope) {
     private val wm = WorkManager.getInstance(ctx)
+
+    // WorkManager starts every queued chapter at once (dozens). Over one HTTP/2 connection each stream then
+    // buffers megabytes in the heap faster than it is written to disk -> OutOfMemoryError. So: at most
+    // MAX_PARALLEL network downloads at a time, over HTTP/1.1 (backpressure stays in the OS socket buffer).
+    val gate = kotlinx.coroutines.sync.Semaphore(MAX_PARALLEL)
+    val http: okhttp3.OkHttpClient by lazy { app.repo.http.newBuilder().protocols(listOf(okhttp3.Protocol.HTTP_1_1)).build() }
 
     /** "bookKey:n" -> running/queued work */
     private val jobs: StateFlow<Map<String, DlState>> = wm.getWorkInfosByTagFlow(TAG)
@@ -146,7 +153,7 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
         }
     }
 
-    companion object { const val TAG = "dl" }
+    companion object { const val TAG = "dl"; const val MAX_PARALLEL = 3 }
 }
 
 class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
@@ -170,7 +177,14 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
     override suspend fun doWork(): Result {
         val key = inputData.getString("key")!!; val n = inputData.getInt("n", 0)
         runCatching { setForeground(foreground(0f)) }
-        return try {
+        // wait here (shown as queued at 0%) until one of the few download slots is free
+        return try { app.downloads.gate.withPermit { download(key, n) } } catch (e: Exception) {
+            if (isStopped) Result.failure() else if (runAttemptCount < 3) Result.retry() else { app.downloads.finished(ok = false); Result.failure() }
+        }
+    }
+
+    private suspend fun download(key: String, n: Int): Result {
+        return run {
             val files = app.repo.files
             val tmp = File(applicationContext.cacheDir, "dl_${key}_$n").apply { mkdirs() }
             val js = File(tmp, "json"); val og = File(tmp, "ogg")
@@ -195,13 +209,11 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
             app.store.markDownloaded(key, n, inputData.getString("v"))
             app.downloads.finished(ok = true)
             Result.success()
-        } catch (e: Exception) {
-            if (isStopped) Result.failure() else if (runAttemptCount < 3) Result.retry() else { app.downloads.finished(ok = false); Result.failure() }
         }
     }
 
     private suspend fun fetch(url: String, to: File, append: Boolean, onProgress: suspend (Float) -> Unit) {
-        app.repo.http.newCall(Request.Builder().url(url).build()).execute().use { r ->
+        app.downloads.http.newCall(Request.Builder().url(url).build()).execute().use { r ->
             if (!r.isSuccessful) error("HTTP ${r.code}")
             val body = r.body!!; val total = body.contentLength().coerceAtLeast(1)
             var got = 0L
