@@ -129,6 +129,25 @@ matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTh
 let books = [];               // books.json + .chapters
 const bookById = (id) => books.find((b) => b.id === id);
 const chUrl = (b, n, ext) => `${b.data}ch${pad(n)}.${ext}`;
+// Chapter audio from the network. A chapter over the host's file-size cap is published as byte pieces
+// chNNN.ogg.1, .2, ... (index.json: "parts": [sizes]); they are joined back into the original file.
+async function fetchOgg(b, n, signal, onProgress, cache = 'default') {
+  const meta = b.chapters.find((c) => c.n === n), parts = meta?.parts;
+  const urls = parts ? parts.map((_, i) => `${chUrl(b, n, 'ogg')}.${i + 1}`) : [chUrl(b, n, 'ogg')];
+  const chunks = []; let got = 0, total = parts ? parts.reduce((a, x) => a + x, 0) : 0;
+  for (const url of urls) {
+    const r = await fetch(url, { cache, signal });
+    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + url);
+    if (!parts) total = +r.headers.get('content-length') || 0;
+    if (!onProgress || !r.body) { const bl = await r.blob(); chunks.push(bl); got += bl.size; continue; }
+    const rd = r.body.getReader();
+    for (;;) {
+      const { done, value } = await rd.read(); if (done) break;
+      chunks.push(value); got += value.length; onProgress(got, total);
+    }
+  }
+  return new Blob(chunks, { type: 'audio/ogg' });
+}
 
 async function fetchJsonFresh(url) {
   try {
@@ -157,9 +176,9 @@ const key = (b, n) => b + ':' + n;
 async function scanDownloads() {
   try {
     const c = await caches.open(DATA_CACHE);
-    const names = new Set((await c.keys()).map((r) => new URL(r.url).pathname));
+    const names = new Set((await c.keys()).map((r) => new URL(r.url).href));   // full URL: data may live on another host
     for (const b of books) for (const ch of b.chapters) {
-      const base = new URL(chUrl(b, ch.n, ''), location.href).pathname;
+      const base = new URL(chUrl(b, ch.n, ''), location.href).href;
       if (names.has(base + 'ogg') && names.has(base + 'json')) downloaded.add(key(b.id, ch.n));
     }
   } catch {}
@@ -218,17 +237,13 @@ async function runJob(j) {
     const rj = await fetch(chUrl(b, j.n, 'json'), { cache: 'reload', signal: j.ctrl.signal });
     if (!rj.ok) throw new Error('HTTP ' + rj.status);
     const jsonBlob = await rj.blob();
-    const r = await fetch(chUrl(b, j.n, 'ogg'), { cache: 'reload', signal: j.ctrl.signal });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const total = +r.headers.get('content-length') || (meta.bytes - jsonBlob.size) || 1;
-    const rd = r.body.getReader(), parts = []; let got = 0, lastPaint = 0;
-    for (;;) {
-      const { done, value } = await rd.read(); if (done) break;
-      parts.push(value); got += value.length; j.p = Math.min(1, got / total);
+    let lastPaint = 0;
+    const ogg = await fetchOgg(b, j.n, j.ctrl.signal, (got, total) => {
+      j.p = Math.min(1, got / (total || (meta.bytes - jsonBlob.size) || 1));
       if (Date.now() - lastPaint > 150) { lastPaint = Date.now(); paintDl(j.b, j.n); refreshDownloadsPage(); }
-    }
+    }, 'reload');
     await c.put(chUrl(b, j.n, 'json'), new Response(jsonBlob, { headers: { 'content-type': 'application/json' } }));
-    await c.put(chUrl(b, j.n, 'ogg'), new Response(new Blob(parts, { type: 'audio/ogg' }), { headers: { 'content-type': 'audio/ogg' } }));
+    await c.put(chUrl(b, j.n, 'ogg'), new Response(ogg, { headers: { 'content-type': 'audio/ogg' } }));
     downloaded.add(key(j.b, j.n)); bs(j.b).dlv[j.n] = meta.v || '1'; saveBs(j.b);
   } catch (e) {
     if (e.name !== 'AbortError') toast(`Глава ${j.n}: не удалось скачать`);
@@ -1110,7 +1125,10 @@ async function renderReader() {
   const nav = navChapters(), i = nav.findIndex((c) => c.n === cur.n);
   $('#prevCh').disabled = i <= 0; $('#nextCh').disabled = i >= nav.length - 1;
   if (audioUrl) URL.revokeObjectURL(audioUrl);
-  try { audioUrl = URL.createObjectURL(await (await getRes(chUrl(b, cur.n, 'ogg'))).blob()); }
+  try {
+    let hit = null; try { hit = await (await caches.open(DATA_CACHE)).match(chUrl(b, cur.n, 'ogg')); } catch {}
+    audioUrl = URL.createObjectURL(hit ? await hit.blob() : await fetchOgg(b, cur.n));
+  }
   catch { toast('Аудио не скачано, а интернета нет'); return; }
   audio.src = audioUrl; audio.defaultPlaybackRate = audio.playbackRate = bookSpeed(); setSpeedLabel();
   const s = bs(b.id), pos = s.done[cur.n] ? 0 : s.pos[cur.n] || 0, auto = autoplayNext; autoplayNext = false;

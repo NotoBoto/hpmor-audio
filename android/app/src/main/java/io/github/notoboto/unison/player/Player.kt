@@ -61,7 +61,13 @@ data class NowPlaying(val book: Book, val n: Int, val title: String, val duratio
 
 /** App-wide player state and commands. Owns the ExoPlayer used by [PlaybackService]. */
 class PlayerController(private val ctx: Context, private val app: UnisonApp, private val scope: CoroutineScope) {
+    private val streams = StreamStore(java.io.File(ctx.cacheDir, "stream"))
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     val exo: ExoPlayer = ExoPlayer.Builder(ctx)
+        // split chapters (#parts=...) are stitched from their pieces; network files are fetched whole once
+        // (the audio host ignores Range requests); downloaded chapters play from disk as before
+        .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+            PartsDataSource.Factory(WholeFileDataSource.Factory(androidx.media3.datasource.DefaultDataSource.Factory(ctx), streams))))
         .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_SPEECH).build(), true)
         .setHandleAudioBecomingNoisy(true)
         .setSeekBackIncrementMs(15_000).setSeekForwardIncrementMs(15_000)

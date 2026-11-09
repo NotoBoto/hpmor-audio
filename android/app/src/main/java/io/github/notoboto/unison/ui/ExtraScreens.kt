@@ -439,7 +439,7 @@ fun CharactersScreen(nav: NavController, key: String) {
     fun play(c: io.github.notoboto.unison.data.Character) {
         runCatching { mp.reset() }
         if (playing == c.name) { playing = null; return }
-        val url = book.source.url + book.meta.data + (c.sample ?: return)
+        val url = book.dataUrl + (c.sample ?: return)
         runCatching {
             mp.setDataSource(url); mp.setOnPreparedListener { it.start() }; mp.setOnCompletionListener { playing = null }; mp.prepareAsync()
             playing = c.name

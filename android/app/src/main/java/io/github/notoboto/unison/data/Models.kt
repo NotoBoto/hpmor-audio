@@ -29,6 +29,8 @@ data class ChapterMeta(
     val bytes: Long = 0,
     val v: String? = null,
     val date: String? = null,
+    /** sizes of the byte pieces chNNN.ogg.1, .2, ... when the audio is published split (host file-size cap) */
+    val parts: List<Long>? = null,
 )
 
 @Serializable
@@ -193,8 +195,16 @@ data class Book(val source: Source, val meta: BookMeta, val chapters: List<Chapt
     fun abs(path: String?): String? = path?.let { if (it.contains("://")) it else source.url + it }
     val coverUrl: String? get() = abs(meta.cover)
     val coverSmUrl: String? get() = abs(meta.coverSm ?: meta.cover)
-    val indexUrl: String get() = source.url + meta.data + "index.json"
-    fun chUrl(n: Int, ext: String) = source.url + meta.data + "ch%03d.%s".format(n, ext)
+    /** chapter data folder; may live on another host (absolute URL in books.json "data") */
+    val dataUrl: String get() = abs(meta.data)!!
+    val indexUrl: String get() = dataUrl + "index.json"
+    fun chUrl(n: Int, ext: String) = dataUrl + "ch%03d.%s".format(n, ext)
+    /** URLs to fetch the chapter audio from: the pieces when it is published split, else the one file */
+    fun oggUrls(n: Int): List<String> = chapters.find { it.n == n }?.parts?.indices?.map { chUrl(n, "ogg") + "." + (it + 1) }
+        ?: listOf(chUrl(n, "ogg"))
+    /** URI for streaming; a split chapter carries its piece sizes for [io.github.notoboto.unison.player.PartsDataSource] */
+    fun streamUri(n: Int): String = chapters.find { it.n == n }?.parts?.let { chUrl(n, "ogg") + "#parts=" + it.joinToString(",") }
+        ?: chUrl(n, "ogg")
     val shortTitle: String get() = meta.short ?: meta.title
 }
 

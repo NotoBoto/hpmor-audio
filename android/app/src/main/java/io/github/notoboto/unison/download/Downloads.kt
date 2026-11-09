@@ -73,7 +73,7 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
                 added++; continue
             }
             val req = OneTimeWorkRequestBuilder<DownloadWorker>()
-                .setInputData(workDataOf("key" to b.key, "n" to n, "json" to b.chUrl(n, "json"), "ogg" to b.chUrl(n, "ogg"),
+                .setInputData(workDataOf("key" to b.key, "n" to n, "json" to b.chUrl(n, "json"), "ogg" to b.oggUrls(n).toTypedArray(),
                     "v" to (ch.v ?: "1"), "title" to "${b.shortTitle} — ${ch.title}"))
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(if (wifi) NetworkType.UNMETERED else NetworkType.CONNECTED).build())
                 .addTag(TAG).addTag("k:${b.key}:$n")
@@ -174,13 +174,19 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
             val files = app.repo.files
             val tmp = File(applicationContext.cacheDir, "dl_${key}_$n").apply { mkdirs() }
             val js = File(tmp, "json"); val og = File(tmp, "ogg")
-            fetch(inputData.getString("json")!!, js) { }
+            fetch(inputData.getString("json")!!, js, false) { }
             var last = 0L
-            fetch(inputData.getString("ogg")!!, og) { p ->
-                if (System.currentTimeMillis() - last > 400) {
-                    last = System.currentTimeMillis()
-                    setProgress(Data.Builder().putFloat("p", p).build())
-                    runCatching { setForeground(foreground(p)) }
+            // one URL, or the byte pieces of a split chapter: appended in order they give back the original file
+            val urls = inputData.getStringArray("ogg") ?: arrayOf(inputData.getString("ogg")!!)
+            og.delete()
+            urls.forEachIndexed { i, url ->
+                fetch(url, og, true) { p0 ->
+                    val p = (i + p0) / urls.size
+                    if (System.currentTimeMillis() - last > 400) {
+                        last = System.currentTimeMillis()
+                        setProgress(Data.Builder().putFloat("p", p).build())
+                        runCatching { setForeground(foreground(p)) }
+                    }
                 }
             }
             files.write(key, n, "json") { out -> js.inputStream().use { it.copyTo(out) } }
@@ -194,12 +200,12 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         }
     }
 
-    private suspend fun fetch(url: String, to: File, onProgress: suspend (Float) -> Unit) {
+    private suspend fun fetch(url: String, to: File, append: Boolean, onProgress: suspend (Float) -> Unit) {
         app.repo.http.newCall(Request.Builder().url(url).build()).execute().use { r ->
             if (!r.isSuccessful) error("HTTP ${r.code}")
             val body = r.body!!; val total = body.contentLength().coerceAtLeast(1)
             var got = 0L
-            to.outputStream().use { out ->
+            java.io.FileOutputStream(to, append).use { out ->
                 body.byteStream().use { inp ->
                     val buf = ByteArray(64 * 1024)
                     while (true) {

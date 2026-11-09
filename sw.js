@@ -12,7 +12,7 @@ self.addEventListener('activate', (e) => {
     .then(() => self.clients.claim()));
 });
 
-const isChapterFile = (p) => /\/ch\d+\.(json|ogg)$/.test(p);
+const isChapterFile = (p) => /\/ch\d+\.(json|ogg(\.\d+)?)$/.test(p);
 const isList = (p) => /\/(index|books)\.json$/.test(p);
 
 self.addEventListener('fetch', (e) => {
