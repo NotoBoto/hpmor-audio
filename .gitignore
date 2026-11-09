@@ -1,0 +1,4 @@
+# HPMOR audio is served from Cloudflare Pages (cf/, deployed by night.py); keep it out of GitHub Pages (1 GB site limit).
+# Files stay on disk: build_web.py builds cf/ from them.
+data/*.ogg
+data/**/*.ogg
