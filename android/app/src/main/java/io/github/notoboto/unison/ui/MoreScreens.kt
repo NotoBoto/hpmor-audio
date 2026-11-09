@@ -32,6 +32,8 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -148,6 +150,15 @@ fun SettingsScreen(nav: NavController) {
             .onSuccess { scope.launch { app.repo.refreshAll(); snack.showSnackbar("Восстановлено") } }
             .onFailure { scope.launch { snack.showSnackbar("Это не резервная копия Unison") } } }
     }
+    val syncOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let { u -> runCatching { ctx.contentResolver.openOutputStream(u, "wt")!!.use { it.write(io.github.notoboto.unison.data.Sync.export(app.store, app.repo).toByteArray()) } }
+            .onSuccess { scope.launch { snack.showSnackbar("Файл прогресса сохранён") } } }
+    }
+    val syncIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { u -> runCatching { io.github.notoboto.unison.data.Sync.import(app.store, ctx.contentResolver.openInputStream(u)!!.bufferedReader().readText()) }
+            .onSuccess { r -> scope.launch { app.repo.refreshAll(); snack.showSnackbar("Слито: книг ${r.books}, глав обновлено ${r.chapters}, новых закладок ${r.bookmarks}") } }
+            .onFailure { scope.launch { snack.showSnackbar("Это не файл прогресса Unison") } } }
+    }
     val folderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let {
             ctx.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
@@ -179,6 +190,18 @@ fun SettingsScreen(nav: NavController) {
                 PickRow("Перемотка назад", s.skipBack, listOf(5, 10, 15, 30, 60).map { it to "$it с" }) { v -> set { it.copy(skipBack = v) } }
                 PickRow("Перемотка вперёд", s.skipForward, listOf(5, 10, 15, 30, 60).map { it to "$it с" }) { v -> set { it.copy(skipForward = v) } }
                 SwitchRow("Не гасить экран", "Пока открыта глава и идёт воспроизведение", s.keepScreenOn) { v -> set { it.copy(keepScreenOn = v) } }
+                SwitchRow("Кнопка трансляции", "Google Cast: колонки и телевизоры в той же сети", s.castButton) { v -> set { it.copy(castButton = v) } }
+                SwitchRow("Своя скорость для каждой книги", "Скорость запоминается отдельно для книги", s.perBookSpeed) { v -> set { it.copy(perBookSpeed = v) } }
+                PickRow("Перемотка после паузы", s.autoRewindAfterMin, listOf(0 to "Выключено", 1 to "Пауза дольше 1 мин", 2 to "Пауза дольше 2 мин",
+                    5 to "Пауза дольше 5 мин", 15 to "Пауза дольше 15 мин")) { v -> set { it.copy(autoRewindAfterMin = v) } }
+                if (s.autoRewindAfterMin > 0) PickRow("Насколько отматывать", s.autoRewindSec, listOf(5, 10, 15, 30).map { it to "$it с назад" }) { v -> set { it.copy(autoRewindSec = v) } }
+                SwitchRow("Таймер сна по расписанию", "Включается сам, если начать слушать в это время", s.sleepScheduleOn) { v -> set { it.copy(sleepScheduleOn = v) } }
+                if (s.sleepScheduleOn) {
+                    val hh = (0 until 24).flatMap { h -> listOf(h * 60, h * 60 + 30) }.map { it to "%02d:%02d".format(it / 60, it % 60) }
+                    PickRow("С", s.sleepFrom, hh) { v -> set { it.copy(sleepFrom = v) } }
+                    PickRow("До", s.sleepTo, hh) { v -> set { it.copy(sleepTo = v) } }
+                    PickRow("Длительность таймера", s.sleepScheduleMin, listOf(10, 15, 20, 30, 45, 60, 90).map { it to "$it мин" }) { v -> set { it.copy(sleepScheduleMin = v) } }
+                }
             }
             item {
                 SheetTitle("Главы")
@@ -209,6 +232,17 @@ fun SettingsScreen(nav: NavController) {
                 Row1(Icons.Filled.Storage, "Хранилище", "Где хранить главы, очистка кэша") { nav.navigate("storage") }
             }
             item {
+                SheetTitle("Синтезатор речи (свои книги)")
+                PickRow("Скорость речи", s.ttsRate, listOf(0.7f, 0.85f, 1f, 1.15f, 1.3f, 1.5f).map { it to "${it}×".replace('.', ',') }) { v -> set { it.copy(ttsRate = v) } }
+                PickRow("Высота голоса", s.ttsPitch, listOf(0.8f, 0.9f, 1f, 1.1f, 1.2f).map { it to "${it}".replace('.', ',') }) { v -> set { it.copy(ttsPitch = v) } }
+                Row1(Icons.Filled.RecordVoiceOver, "Голос и движок", "Системные настройки синтеза речи") {
+                    runCatching { ctx.startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                }
+                SheetTitle("Синхронизация")
+                Text("Перенос прогресса между телефоном, планшетом и сайтом: сохраните файл на одном устройстве и загрузите на другом. Данные сливаются: остаётся самое свежее.",
+                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row1(Icons.Filled.Upload, "Сохранить файл прогресса", "Прогресс, закладки, история, категории") { syncOut.launch("unison-progress_" + java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm", java.util.Locale.US).format(java.util.Date()) + ".json") }
+                Row1(Icons.Filled.Download, "Загрузить файл прогресса", "С сайта или другого устройства") { syncIn.launch(arrayOf("application/json", "*/*")) }
                 SheetTitle("Резервная копия")
                 Row1(Icons.Filled.Backup, "Создать резервную копию", "Библиотека, прогресс, история, настройки, источники") { exportLauncher.launch(backupFileName()) }
                 Row1(Icons.Filled.Refresh, "Восстановить из файла", null) { importLauncher.launch(arrayOf("application/json", "*/*")) }

@@ -38,6 +38,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -392,3 +394,46 @@ fun OnboardingScreen(onDone: () -> Unit) {
 @Composable
 private fun SectionTitle(t: String) = Text(t, Modifier.padding(top = 12.dp, bottom = 6.dp), color = MaterialTheme.colorScheme.primary,
     fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+
+// ---------------- characters ----------------
+@Composable
+fun CharactersScreen(nav: NavController, key: String) {
+    val ctx = LocalContext.current
+    val app = ctx.app()
+    val book = remember(key) { app.repo.book(key) } ?: return
+    var list by remember { mutableStateOf<List<io.github.notoboto.unison.data.Character>?>(null) }
+    var playing by remember { mutableStateOf<String?>(null) }
+    val mp = remember { android.media.MediaPlayer() }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { runCatching { mp.release() } } }
+    androidx.compose.runtime.LaunchedEffect(key) { list = app.repo.characters(book) }
+    fun play(c: io.github.notoboto.unison.data.Character) {
+        runCatching { mp.reset() }
+        if (playing == c.name) { playing = null; return }
+        val url = book.source.url + book.meta.data + (c.sample ?: return)
+        runCatching {
+            mp.setDataSource(url); mp.setOnPreparedListener { it.start() }; mp.setOnCompletionListener { playing = null }; mp.prepareAsync()
+            playing = c.name
+        }
+    }
+    Scaffold(topBar = { BackBar(nav, "Действующие лица") }) { pad ->
+        val l = list
+        when {
+            l == null -> EmptyState("⏳", "Загружаю…", Modifier.padding(pad))
+            l.isEmpty() -> EmptyState("🎭", "Для этой книги нет списка действующих лиц или нет интернета.", Modifier.padding(pad))
+            else -> LazyColumn(Modifier.padding(pad)) {
+                item { Text("Нажмите ▶, чтобы услышать голос. В тексте главы нажатие на имя в списке ролей подсвечивает реплики персонажа.",
+                    Modifier.padding(16.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                items(l, key = { it.name }) { c ->
+                    val range = if (c.chapters.isEmpty()) "" else if (c.chapters.size == 1) "глава ${c.chapters[0]}" else "главы ${c.chapters.first()}–${c.chapters.last()} (${c.chapters.size})"
+                    ListItem(headlineContent = { Text(c.name, fontWeight = FontWeight.Medium) },
+                        supportingContent = { Text("${c.voice}\nРеплик: ${c.lines} • $range") },
+                        trailingContent = {
+                            if (c.sample != null) IconButton(onClick = { play(c) }) {
+                                Icon(if (playing == c.name) Icons.Filled.Stop else Icons.Filled.PlayArrow, "Образец голоса", tint = MaterialTheme.colorScheme.primary)
+                            }
+                        })
+                }
+            }
+        }
+    }
+}

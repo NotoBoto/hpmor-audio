@@ -162,7 +162,7 @@ fun BookScreen(nav: NavController, key: String) {
                         book.meta.author?.let { Meta(Icons.Outlined.Person, it) }
                         book.meta.translator?.let { Meta(Icons.Outlined.Translate, it) }
                         val total = book.chapters.sumOf { it.duration }
-                        Meta(Icons.Outlined.Schedule, "${hours(total)} • озвучено ${book.chapters.size}" + (book.meta.total?.let { " из $it" } ?: ""))
+                        Meta(Icons.Outlined.Schedule, if (book.source.url == io.github.notoboto.unison.data.LOCAL_URL) "${chapters(book.chapters.size)} • озвучено ${st.downloaded[key].orEmpty().size}" else "${hours(total)} • озвучено ${book.chapters.size}" + (book.meta.total?.let { " из $it" } ?: ""))
                     }
                 }
             }
@@ -205,6 +205,8 @@ fun BookScreen(nav: NavController, key: String) {
                             val from = continueTarget() ?: 0
                             val ahead = book.chapters.filter { it.n >= from && !app.store.isDownloaded(key, it.n) }.map { it.n }
                             fun q(ns: List<Int>) { dlMenu = false; val k = app.downloads.enqueue(book, ns); scope.launch { snack.showSnackbar(if (k > 0) "В очереди: ${chapters(k)}" else "Уже скачано") } }
+                            if (book.source.url == io.github.notoboto.unison.data.LOCAL_URL) Text("Озвучить синтезатором:", Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             DropdownMenuItem({ Text("Следующую главу") }, { q(ahead.take(1)) })
                             DropdownMenuItem({ Text("Следующие 5") }, { q(ahead.take(5)) })
                             DropdownMenuItem({ Text("Следующие 10") }, { q(ahead.take(10)) })
@@ -220,6 +222,8 @@ fun BookScreen(nav: NavController, key: String) {
                             val old = app.downloads.outdated(listOf(book)).size
                             DropdownMenuItem({ Text("Обновить скачанные ($old)") }, { menu = false; app.downloads.updateOutdated(listOf(book)) }, enabled = old > 0)
                             DropdownMenuItem({ Text("Закладки (${marks.size})") }, { menu = false; nav.navigate("bookmarks/$key") })
+                            DropdownMenuItem({ Text("Действующие лица") }, { menu = false; nav.navigate("characters/$key") })
+                            DropdownMenuItem({ Text("Поиск по книге") }, { menu = false; nav.navigate("search/$key") })
                             DropdownMenuItem({ Text("Категории…") }, { menu = false; catDialog = true })
                             DropdownMenuItem({ Text("Изменить…") }, { menu = false; editDialog = true })
                             DropdownMenuItem({ Text("Поделиться") }, { menu = false; shareBook(ctx, book) })

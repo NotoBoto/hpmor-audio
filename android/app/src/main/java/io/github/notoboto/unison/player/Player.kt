@@ -17,7 +17,8 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.SessionToken
 import io.github.notoboto.unison.MainActivity
 import io.github.notoboto.unison.UnisonApp
@@ -33,15 +34,16 @@ import kotlinx.coroutines.launch
 import kotlin.math.sqrt
 
 /** Background playback: MediaSession + notification + lock screen + headset buttons. */
-class PlaybackService : MediaSessionService() {
-    private var session: MediaSession? = null
+class PlaybackService : MediaLibraryService() {
+    private var session: MediaLibrarySession? = null
 
     override fun onCreate() {
         super.onCreate()
         val app = application as UnisonApp
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).putExtra("openPlayer", true),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        session = MediaSession.Builder(this, app.player.exo).setSessionActivity(open).build()
+        session = MediaLibrarySession.Builder(this, app.player.exo, AutoLibrary(app)).setSessionActivity(open).build()
+        app.player.session = session
     }
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -65,6 +67,49 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
         .setSeekBackIncrementMs(15_000).setSeekForwardIncrementMs(15_000)
         .build()
     private var controller: MediaController? = null
+    var session: MediaSession? = null
+
+    // ---- Google Cast: the session switches between the phone player and the Cast device ----
+    private var cast: androidx.media3.cast.CastPlayer? = null
+    val casting = MutableStateFlow(false)
+    val active: Player get() = if (casting.value) cast ?: exo else exo
+    fun initCast() {
+        if (cast != null) return
+        runCatching {
+            val c = androidx.media3.cast.CastPlayer(com.google.android.gms.cast.framework.CastContext.getSharedInstance(ctx))
+            c.addListener(object : Player.Listener {
+                override fun onIsPlayingChanged(playing: Boolean) { if (casting.value) { isPlaying.value = playing; if (playing) startTicker() } }
+                override fun onPlaybackStateChanged(state: Int) { if (casting.value && state == Player.STATE_ENDED) onEnded() }
+            })
+            c.setSessionAvailabilityListener(object : androidx.media3.cast.SessionAvailabilityListener {
+                override fun onCastSessionAvailable() { toCast(c) }
+                override fun onCastSessionUnavailable() { fromCast(c) }
+            })
+            cast = c
+        }
+    }
+    private fun castItem(): MediaItem? {
+        val np = now.value ?: return null
+        val ch = np.book.chapters.find { it.n == np.n }
+        return MediaItem.Builder().setMediaId("${np.book.key}:${np.n}").setUri(np.book.chUrl(np.n, "ogg")).setMimeType("audio/ogg")
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(ch?.title ?: np.title).setArtist(np.book.meta.author).setAlbumTitle(np.book.meta.title)
+                .setArtworkUri(np.book.coverUrl?.let(Uri::parse)).build()).build()
+    }
+    private fun toCast(c: androidx.media3.cast.CastPlayer) {
+        val item = castItem() ?: run { casting.value = true; session?.player = c; return }
+        val pos = exo.currentPosition; val wasPlaying = exo.isPlaying
+        exo.pause()
+        casting.value = true
+        session?.player = c
+        c.setMediaItem(item, pos); c.prepare(); c.playWhenReady = wasPlaying
+    }
+    private fun fromCast(c: androidx.media3.cast.CastPlayer) {
+        val pos = c.currentPosition
+        casting.value = false
+        session?.player = exo
+        if (pos > 0) exo.seekTo(pos)
+        isPlaying.value = exo.isPlaying
+    }
 
     val now = MutableStateFlow<NowPlaying?>(null)
     val isPlaying = MutableStateFlow(false)
@@ -80,9 +125,11 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
         exo.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying.value = playing
-                if (playing) startTicker() else { saveNow(); position.value = exo.currentPosition / 1000.0 }
+                Widgets.update(ctx)
+                if (casting.value) return
+                if (playing) startTicker() else { saveNow(); position.value = exo.currentPosition / 1000.0; pausedAt = System.currentTimeMillis() }
             }
-            override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_ENDED) onEnded() }
+            override fun onPlaybackStateChanged(state: Int) { if (!casting.value && state == Player.STATE_ENDED) onEnded() }
         })
         scope.launch {
             runCatching {
@@ -97,7 +144,7 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
             var k = 0
             var lastStat = System.currentTimeMillis()
             while (isActive) {
-                position.value = exo.currentPosition / 1000.0
+                position.value = active.currentPosition / 1000.0
                 if (++k % 25 == 0) {
                     saveNow()
                     val t = System.currentTimeMillis()
@@ -111,35 +158,87 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
 
     fun saveNow() {
         val np = now.value ?: return
-        val p = exo.currentPosition / 1000.0
-        if (exo.mediaItemCount > 0) app.store.setPos(np.book.key, np.n, p, np.duration)
+        val p = active.currentPosition / 1000.0
+        if (active.mediaItemCount > 0) app.store.setPos(np.book.key, np.n, p, np.duration)
     }
 
-    /** Load a chapter; continue from saved position unless it was finished. */
-    fun open(b: Book, n: Int, autoplay: Boolean) {
-        val ch = b.chapters.find { it.n == n } ?: return
-        if (now.value?.book?.key == b.key && now.value?.n == n) { if (autoplay) play(); return }
+    /** Build the media item for a chapter and make it "current" (start position in seconds). Shared with Android Auto. */
+    fun resolve(b: Book, n: Int): Pair<MediaItem, Double>? {
+        val ch = b.chapters.find { it.n == n } ?: return null
         saveNow()
         val pr = app.store.progress(b.key, n)
         val start = if (pr.done || pr.pos > ch.duration - 3) 0.0 else pr.pos
         val item = MediaItem.Builder().setMediaId("${b.key}:$n").setUri(app.repo.audioUri(b, n))
             .setMediaMetadata(MediaMetadata.Builder().setTitle(ch.title).setArtist(b.meta.author).setAlbumTitle(b.meta.title)
-                .setArtworkUri(b.coverUrl?.let(Uri::parse)).build()).build()
+                .setArtworkUri(b.coverUrl?.let(Uri::parse)).setIsPlayable(true).setIsBrowsable(false).build()).build()
         now.value = NowPlaying(b, n, ch.title, ch.duration)
+        applyBookSpeed(b.key)
         position.value = start
-        exo.setMediaItem(item, (start * 1000).toLong())
-        exo.prepare()
-        exo.playWhenReady = autoplay
         app.store.opened(b.key, n)
         app.downloads.autoAhead(b, n)
+        Widgets.update(ctx)
+        return item to start
     }
 
-    fun play() { if (exo.playbackState == Player.STATE_IDLE) exo.prepare(); exo.play() }
-    fun pause() = exo.pause()
-    fun toggle() = if (exo.isPlaying) pause() else play()
-    fun seekTo(sec: Double) { exo.seekTo((sec * 1000).toLong()); position.value = sec }
-    fun skip(sec: Int) = seekTo((exo.currentPosition / 1000.0 + sec).coerceIn(0.0, now.value?.duration ?: 0.0))
-    fun setSpeed(v: Float) { speed.value = v; exo.playbackParameters = exo.playbackParameters.withSpeed(v); app.store.settings { it.copy(speed = v) } }
+    /** Load a chapter; continue from saved position unless it was finished. */
+    fun open(b: Book, n: Int, autoplay: Boolean) {
+        if (now.value?.book?.key == b.key && now.value?.n == n && exo.mediaItemCount > 0) { if (autoplay) play(); return }
+        if (b.source.url == io.github.notoboto.unison.data.LOCAL_URL && !app.store.isDownloaded(b.key, n)) {
+            resolve(b, n); exo.clearMediaItems(); return       // text only until the chapter is voiced
+        }
+        val (item, start) = resolve(b, n) ?: return
+        exo.setMediaItem(item, (start * 1000).toLong())
+        exo.prepare()
+        if (casting.value) cast?.let { c -> castItem()?.let { c.setMediaItem(it, (start * 1000).toLong()); c.prepare() } }
+        if (autoplay) play() else active.playWhenReady = false
+    }
+
+    /** Play/pause; if nothing is loaded (e.g. after a restart), continue the last chapter from history. */
+    fun toggleOrResume() {
+        if (now.value != null && exo.mediaItemCount > 0) { toggle(); return }
+        val h = app.store.s.history.firstOrNull() ?: return
+        val b = app.repo.book(h.book) ?: return
+        open(b, h.n, autoplay = true)
+    }
+
+    private var pausedAt = 0L
+    fun play() {
+        val p = active
+        if (p.mediaItemCount == 0) {
+            now.value?.let { np -> if (np.book.source.url == io.github.notoboto.unison.data.LOCAL_URL) {
+                android.widget.Toast.makeText(ctx, "Глава ещё не озвучена: нажмите ⤓ у главы", android.widget.Toast.LENGTH_LONG).show()
+                if (!app.store.isDownloaded(np.book.key, np.n)) return
+                open(np.book, np.n, autoplay = true); return
+            } }
+            return
+        }
+        if (p.playbackState == Player.STATE_IDLE) p.prepare()
+        val s = app.store.s.settings
+        if (s.autoRewindAfterMin > 0 && pausedAt > 0 && System.currentTimeMillis() - pausedAt > s.autoRewindAfterMin * 60_000L)
+            p.seekTo((p.currentPosition - s.autoRewindSec * 1000L).coerceAtLeast(0))
+        pausedAt = 0
+        if (s.sleepScheduleOn && sleep.value == null && inWindow(s.sleepFrom, s.sleepTo)) startSleep(s.sleepScheduleMin * 60_000L)
+        p.play()
+    }
+    private fun inWindow(from: Int, to: Int): Boolean {
+        val c = java.util.Calendar.getInstance(); val m = c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
+        return if (from <= to) m in from until to else m >= from || m < to
+    }
+    fun pause() { active.pause(); if (casting.value) pausedAt = System.currentTimeMillis() }
+    fun toggle() = if (active.isPlaying) pause() else play()
+    fun seekTo(sec: Double) { active.seekTo((sec * 1000).toLong()); position.value = sec }
+    fun skip(sec: Int) = seekTo((active.currentPosition / 1000.0 + sec).coerceIn(0.0, now.value?.duration ?: 0.0))
+    fun setSpeed(v: Float) {
+        speed.value = v; exo.playbackParameters = exo.playbackParameters.withSpeed(v)
+        val bk = now.value?.book?.key
+        if (app.store.s.settings.perBookSpeed && bk != null) app.store.settings { it.copy(bookSpeed = it.bookSpeed + (bk to v)) }
+        else app.store.settings { it.copy(speed = v) }
+    }
+    private fun applyBookSpeed(key: String) {
+        val s = app.store.s.settings
+        val v = if (s.perBookSpeed) s.bookSpeed[key] ?: s.speed else s.speed
+        speed.value = v; exo.playbackParameters = exo.playbackParameters.withSpeed(v)
+    }
     fun neighbour(d: Int): Int? { val np = now.value ?: return null; val l = np.book.chapters; val i = l.indexOfFirst { it.n == np.n }; return l.getOrNull(i + d)?.n }
 
     private fun onEnded() {
@@ -189,4 +288,46 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
     private fun stopShake() { shake?.let { ctx.getSystemService(SensorManager::class.java)?.unregisterListener(it) }; shake = null }
 
     val connected: StateFlow<Boolean> get() = MutableStateFlow(controller != null)
+}
+
+/** Android Auto / media browsers: library books -> chapters. */
+class AutoLibrary(private val app: UnisonApp) : MediaLibrarySession.Callback {
+    private fun browsable(id: String, title: String, sub: String?, art: String?) = MediaItem.Builder().setMediaId(id)
+        .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setSubtitle(sub).setArtworkUri(art?.let(Uri::parse))
+            .setIsBrowsable(true).setIsPlayable(false).setMediaType(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK).build()).build()
+
+    override fun onGetLibraryRoot(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, params: MediaLibraryService.LibraryParams?) =
+        com.google.common.util.concurrent.Futures.immediateFuture(androidx.media3.session.LibraryResult.ofItem(browsable("root", "Unison", null, null), params))
+
+    override fun onGetChildren(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, parentId: String, page: Int, pageSize: Int,
+                               params: MediaLibraryService.LibraryParams?): com.google.common.util.concurrent.ListenableFuture<androidx.media3.session.LibraryResult<com.google.common.collect.ImmutableList<MediaItem>>> {
+        val items: List<MediaItem> = if (parentId == "root") {
+            val cont = app.store.s.history.firstOrNull()?.let { h -> app.repo.book(h.book)?.let { b ->
+                val ch = b.chapters.find { it.n == h.n }
+                MediaItem.Builder().setMediaId("${b.key}:${h.n}").setMediaMetadata(MediaMetadata.Builder().setTitle("Продолжить: ${ch?.title ?: "глава " + h.n}")
+                    .setSubtitle(b.shortTitle).setArtworkUri(b.coverSmUrl?.let(Uri::parse)).setIsPlayable(true).setIsBrowsable(false).build()).build()
+            } }
+            listOfNotNull(cont) + app.repo.libraryBooks().map { b -> browsable("book:${b.key}", b.meta.title, b.meta.author, b.coverSmUrl) }
+        } else if (parentId.startsWith("book:")) {
+            val b = app.repo.book(parentId.removePrefix("book:"))
+            b?.chapters?.map { ch ->
+                val done = app.store.progress(b.key, ch.n).done
+                MediaItem.Builder().setMediaId("${b.key}:${ch.n}").setMediaMetadata(MediaMetadata.Builder().setTitle(ch.title)
+                    .setSubtitle(if (done) "прослушано" else io.github.notoboto.unison.ui.fmt(ch.duration)).setArtworkUri(b.coverSmUrl?.let(Uri::parse))
+                    .setIsPlayable(true).setIsBrowsable(false).build()).build()
+            }.orEmpty()
+        } else emptyList()
+        return com.google.common.util.concurrent.Futures.immediateFuture(androidx.media3.session.LibraryResult.ofItemList(items, params))
+    }
+
+    override fun onSetMediaItems(session: MediaSession, controller: MediaSession.ControllerInfo, mediaItems: MutableList<MediaItem>, startIndex: Int,
+                                 startPositionMs: Long): com.google.common.util.concurrent.ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+        val id = mediaItems.firstOrNull()?.mediaId.orEmpty()
+        val key = id.substringBeforeLast(':'); val n = id.substringAfterLast(':').toIntOrNull()
+        val b = app.repo.book(key)
+        val r = if (b != null && n != null) app.player.resolve(b, n) else null
+        return com.google.common.util.concurrent.Futures.immediateFuture(
+            if (r != null) MediaSession.MediaItemsWithStartPosition(listOf(r.first), 0, (r.second * 1000).toLong())
+            else MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, startPositionMs))
+    }
 }

@@ -38,7 +38,7 @@ data class Source(val url: String, val name: String)
 data class LibEntry(val sourceUrl: String, val bookId: String, val added: Long = System.currentTimeMillis())
 
 @Serializable
-data class Progress(val pos: Double = 0.0, val done: Boolean = false)
+data class Progress(val pos: Double = 0.0, val done: Boolean = false, val ts: Long = 0)
 
 @Serializable
 data class HistEntry(val book: String, val n: Int, val ts: Long)
@@ -90,6 +90,27 @@ data class Settings(
     val autoCheckCharging: Boolean = false,
     val autoDownloadNew: Boolean = false,
     val notifyDownloads: Boolean = true,
+    // player extras
+    val perBookSpeed: Boolean = false,
+    val bookSpeed: Map<String, Float> = emptyMap(),
+    val autoRewindAfterMin: Int = 0,     // 0 = off
+    val autoRewindSec: Int = 10,
+    val sleepScheduleOn: Boolean = false,
+    val sleepFrom: Int = 23 * 60,        // minutes of the day
+    val sleepTo: Int = 6 * 60,
+    val sleepScheduleMin: Int = 30,
+    // reading
+    val fontFamily: String = "sans",     // sans | serif | mono
+    val lineHeight: Float = 1.6f,
+    val margins: Int = 18,
+    val readerBg: String = "theme",      // theme | sepia | black | white
+    val highlight: String = "yellow",    // yellow | pink | blue | green | none
+    val sentenceHighlight: Boolean = false,
+    val castButton: Boolean = true,
+    // phone speech synthesizer for imported books
+    val ttsRate: Float = 1.0f,
+    val ttsPitch: Float = 1.0f,
+    val ttsLang: String = "ru-RU",
     // where chapters are stored: null = app storage, else SAF tree uri (e.g. SD card)
     val storageUri: String? = null,
 )
@@ -109,6 +130,7 @@ data class AppState(
     val library: List<LibEntry> = emptyList(),
     val progress: Map<String, Map<Int, Progress>> = emptyMap(),   // bookKey -> chapter -> progress
     val last: Map<String, Int> = emptyMap(),                       // bookKey -> last opened chapter
+    val lastTs: Map<String, Long> = emptyMap(),
     val downloaded: Map<String, Map<Int, String>> = emptyMap(),    // bookKey -> chapter -> version
     val history: List<HistEntry> = emptyList(),
     val settings: Settings = Settings(),
@@ -163,3 +185,7 @@ data class ChapterText(val n: Int, val title: String, val roles: List<String>, v
         return ans
     }
 }
+
+@Serializable
+data class Character(val name: String, val voice: String = "", val narrator: Boolean = false, val chapters: List<Int> = emptyList(),
+                     val lines: Int = 0, val sample: String? = null, val sampleText: String? = null)

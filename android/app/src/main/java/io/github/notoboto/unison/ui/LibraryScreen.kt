@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -303,6 +304,17 @@ fun BrowseScreen(nav: NavController) {
     var adding by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<Source?>(null) }
     val snack = remember { SnackbarHostState() }
+    val ctx = LocalContext.current
+    val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { u -> scope.launch {
+            val r = runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { io.github.notoboto.unison.data.Local.import(ctx, u) } }
+            r.onSuccess { m ->
+                app.repo.reloadLocal()
+                app.store.update { s -> s.copy(library = s.library + io.github.notoboto.unison.data.LibEntry(io.github.notoboto.unison.data.LOCAL_URL, m.id)) }
+                nav.navigate("book/" + bookKey(io.github.notoboto.unison.data.LOCAL_URL, m.id))
+            }.onFailure { snack.showSnackbar("Не удалось прочитать файл: ${it.message}") }
+        } }
+    }
 
     Scaffold(topBar = {
         TopAppBar(title = { Text("Обзор") }, actions = { IconButton(onClick = { adding = true }) { Icon(Icons.Filled.Add, "Добавить источник") } })
@@ -328,6 +340,15 @@ fun BrowseScreen(nav: NavController) {
                         modifier = Modifier.clickable { nav.navigate("book/${b.key}") })
                 }
                 return@LazyColumn
+            }
+            item {
+                ListItem(headlineContent = { Text("Импортировать книгу") }, supportingContent = { Text("EPUB, FB2 или TXT с телефона — озвучка синтезатором речи") },
+                    leadingContent = { Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.primary) },
+                    modifier = Modifier.clickable { importLauncher.launch(arrayOf("application/epub+zip", "application/x-fictionbook+xml", "text/plain", "application/octet-stream", "*/*")) })
+                val local = catalogs[io.github.notoboto.unison.data.LOCAL_URL].orEmpty()
+                if (local.isNotEmpty()) ListItem(headlineContent = { Text("На телефоне") }, supportingContent = { Text("Импортированные книги: ${local.size}") },
+                    leadingContent = { Icon(Icons.Filled.PhoneAndroid, null, tint = MaterialTheme.colorScheme.primary) },
+                    modifier = Modifier.clickable { nav.navigate("catalog/-1") })
             }
             item { GroupHeader("Источники") }
             itemsIndexed(st.sources) { i, src ->
@@ -381,7 +402,7 @@ fun CatalogScreen(nav: NavController, srcIdx: Int) {
     val app = LocalContext.current.app()
     val st by app.store.state.collectAsState()
     val catalogs by app.repo.catalogs.collectAsState()
-    val src = st.sources.getOrNull(srcIdx) ?: return
+    val src = if (srcIdx == -1) io.github.notoboto.unison.data.LOCAL_SOURCE else st.sources.getOrNull(srcIdx) ?: return
     val list = catalogs[src.url].orEmpty()
     val scope = rememberCoroutineScope()
     Scaffold(topBar = { BackBar(nav, src.name) { IconButton(onClick = { scope.launch { app.repo.refreshSource(src) } }) { Icon(Icons.Filled.Refresh, "Обновить") } } }) { pad ->

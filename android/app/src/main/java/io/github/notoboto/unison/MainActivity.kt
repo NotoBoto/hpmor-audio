@@ -219,6 +219,8 @@ private fun NavGraph(nav: NavHostController) {
         composable("downloads") { DownloadsScreen(nav) }
         composable("about") { AboutScreen(nav) }
         composable("categories") { io.github.notoboto.unison.ui.CategoriesScreen(nav) }
+        composable("characters/{key}") { io.github.notoboto.unison.ui.CharactersScreen(nav, it.arguments?.getString("key")!!) }
+        composable("search/{key}") { io.github.notoboto.unison.ui.BookSearchScreen(nav, it.arguments?.getString("key")!!) }
         composable("stats") { io.github.notoboto.unison.ui.StatsScreen(nav) }
         composable("storage") { io.github.notoboto.unison.ui.StorageScreen(nav) }
         composable("bookmarks/{key}") { io.github.notoboto.unison.ui.BookmarksScreen(nav, it.arguments?.getString("key")!!) }

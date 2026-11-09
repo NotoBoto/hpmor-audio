@@ -56,12 +56,13 @@ class Store(context: Context, scope: CoroutineScope) {
     fun setPos(book: String, n: Int, pos: Double, duration: Double) = if (incognito) Unit else update { st ->
         val m = st.progress[book].orEmpty().toMutableMap()
         val old = m[n] ?: Progress()
-        m[n] = old.copy(pos = pos, done = old.done || (duration > 0 && pos >= duration * 0.97))
+        m[n] = old.copy(pos = pos, done = old.done || (duration > 0 && pos >= duration * 0.97), ts = System.currentTimeMillis())
         st.copy(progress = st.progress + (book to m))
     }
     fun setDone(book: String, ns: Collection<Int>, done: Boolean) = update { st ->
         val m = st.progress[book].orEmpty().toMutableMap()
-        ns.forEach { n -> m[n] = if (done) (m[n] ?: Progress()).copy(done = true) else Progress() }
+        val now = System.currentTimeMillis()
+        ns.forEach { n -> m[n] = if (done) (m[n] ?: Progress()).copy(done = true, ts = now) else Progress(ts = now) }
         st.copy(progress = st.progress + (book to m))
     }
     /** listening time for statistics */
@@ -77,7 +78,7 @@ class Store(context: Context, scope: CoroutineScope) {
     }
 
     fun opened(book: String, n: Int) = if (incognito) update { it.copy(last = it.last + (book to n)) } else update { st ->
-        st.copy(last = st.last + (book to n),
+        st.copy(last = st.last + (book to n), lastTs = st.lastTs + (book to System.currentTimeMillis()),
             history = (listOf(HistEntry(book, n, System.currentTimeMillis())) + st.history.filterNot { it.book == book && it.n == n }).take(300))
     }
     fun isDownloaded(book: String, n: Int) = s.downloaded[book]?.containsKey(n) == true
