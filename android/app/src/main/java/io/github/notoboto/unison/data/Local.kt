@@ -89,12 +89,15 @@ object Local {
     data class Parsed(val title: String, val author: String?, val chapters: List<LocalChapter>, val cover: ByteArray?)
 
     fun import(ctx: Context, uri: Uri): BookMeta {
-        val name = uri.lastPathSegment.orEmpty().lowercase()
+        val display = runCatching {
+            ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }.getOrNull() ?: uri.lastPathSegment.orEmpty()
+        val name = display.lowercase()
         val bytes = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
         val parsed = when {
             bytes.size > 4 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte() -> epub(bytes)
             name.endsWith(".fb2") || String(bytes, 0, minOf(bytes.size, 400), Charsets.UTF_8).contains("FictionBook") -> fb2(bytes)
-            else -> txt(bytes, name.substringAfterLast('/').substringBeforeLast('.'))
+            else -> txt(bytes, display.substringAfterLast('/').substringBeforeLast('.'))
         }
         require(parsed.chapters.isNotEmpty()) { "В файле не найден текст" }
         val id = "b" + System.currentTimeMillis().toString(36)
@@ -185,7 +188,7 @@ object Local {
         }
         flush()
         // no headings found: split into ~15 000 character parts
-        val result = if (chapters.size > 1) chapters else {
+        val result = if (chapters.size > 1 || chapters.firstOrNull()?.title != "Начало") chapters else {
             val all = chapters.flatMap { it.paras }; val parts = mutableListOf<LocalChapter>(); var acc = mutableListOf<String>(); var size = 0
             for (p in all) { acc += p; size += p.length; if (size > 15000) { parts += LocalChapter("Часть ${parts.size + 1}", acc); acc = mutableListOf(); size = 0 } }
             if (acc.isNotEmpty()) parts += LocalChapter("Часть ${parts.size + 1}", acc)

@@ -92,7 +92,10 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
                         val segs = if (pi == 0) listOf(io.github.notoboto.unison.data.Speakers.Seg(para, io.github.notoboto.unison.data.Speakers.Kind.NARRATOR))
                             else io.github.notoboto.unison.data.Speakers.split(para, speakers)
                         val toks = mutableListOf<Triple<String, Double, Int>>()
+                        val dialogue = pi > 0 && para.trimStart().let { it.startsWith("—") || it.startsWith("–") || it.startsWith("-") }
                         for (sg in segs) {
+                            val roleOf = when (sg.kind) { io.github.notoboto.unison.data.Speakers.Kind.NARRATOR -> 0; io.github.notoboto.unison.data.Speakers.Kind.MALE -> 1; else -> 2 }
+                            if (dialogue) toks += Triple("—", t, roleOf)
                             val (rate, samples) = io.github.notoboto.unison.data.Piper.speak(applicationContext, voiceOf(sg.kind), sg.text, s.ttsRate)
                             if (sr == 0) sr = rate
                             val bytes = ByteArray(samples.size * 2)
