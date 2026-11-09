@@ -50,8 +50,13 @@ async function showStorage() {
 
 // ---------- list ----------
 async function loadIndex() {
-  try { index = await (await getRes('data/index.json')).json(); }
-  catch { index = store.get('index', []); }
+  try {  // network first: new chapters appear; cache only when offline
+    const r = await fetch('data/index.json', { cache: 'no-store' });
+    if (!r.ok) throw 0;
+    index = await r.json();
+  } catch {
+    try { index = await (await cached('data/index.json')).json(); } catch { index = store.get('index', []); }
+  }
   store.set('index', index);
   try { (await caches.open(DATA_CACHE)).put('data/index.json', new Response(JSON.stringify(index))); } catch {}
 }
