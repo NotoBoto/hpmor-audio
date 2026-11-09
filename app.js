@@ -191,6 +191,21 @@ async function migrateOldCache() {
     await caches.delete('hpmor-data-v1');
   } catch {}
 }
+// a book's data folder moved (HPMOR: github.io/unison/data/ -> Cloudflare data/ -> Cloudflare books/hpmor/):
+// re-key downloaded chapters to the current address, so they stay downloaded
+const MOVED = { hpmor: [new URL('data/', location.href).href, 'https://unison-audio.pages.dev/data/'] };
+async function migrateMovedData() {
+  try {
+    const c = await caches.open(DATA_CACHE);
+    for (const req of await c.keys()) for (const b of books) for (const from of MOVED[b.id] || []) {
+      const to = new URL(b.data, location.href).href;
+      if (from === to || !req.url.startsWith(from)) continue;
+      const r = await c.match(req);
+      if (r) await c.put(to + req.url.slice(from.length), r);
+      await c.delete(req);
+    }
+  } catch {}
+}
 function dlState(b, n) {
   const k = key(b, n), j = dlJobs.get(k);
   if (j) return j.state === 'run' ? { s: 'run', p: j.p } : { s: 'queued' };
@@ -1503,6 +1518,7 @@ function setMediaSession() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   await migrateOldCache();
   await loadData();
+  await migrateMovedData();
   await scanDownloads();
   if (!location.hash || location.hash === '#') history.replaceState(null, '', books.length === 1 ? '#/library' : '#/library');
   render();

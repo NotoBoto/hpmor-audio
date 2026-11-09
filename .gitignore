@@ -1,4 +1,4 @@
-# HPMOR audio is served from Cloudflare Pages (cf/, deployed by night.py); keep it out of GitHub Pages (1 GB site limit).
-# Files stay on disk: build_web.py builds cf/ from them.
-data/*.ogg
-data/**/*.ogg
+# HPMOR is served from Cloudflare Pages (cf/books/hpmor/, built by ../scripts/build_web.py, uploaded by night.py),
+# like the Unison Studio books. data/ is only the local build folder; books/hpmor/ holds the cover sources.
+data/
+books/hpmor/
