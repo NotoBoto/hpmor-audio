@@ -21,6 +21,8 @@
     "data": "books/loshadinaya-familiya/",
     "total": 1,
     "description": "У отставного генерала Булдеева нестерпимо болит зуб, и приказчик советует обратиться к саратовскому знахарю, заговаривающему зубы по телеграфу. Беда в том, что фамилию знахаря он забыл — помнит лишь, что она «лошадиная». На поиски нужного слова поднимается вся усадьба. Юмористический рассказ Чехова о том, как простая забывчивость превращается в общее бедствие.",
-    "credits": "Автор: Антон Павлович Чехов\nТекст: общественное достояние\nГолоса: встроенный голос XTTS-v2 «Andrew Chipper»; встроенный голос XTTS-v2 «Damjan Chapman»; встроенный голос XTTS-v2 «Sofia Hellen»; встроенный голос XTTS-v2 «Viktor Eka»; встроенный голос XTTS-v2 «Zacharie Aimilios»; чтец LibriVox (LibriVox, общественное достояние), «Человек в футляре».\nОзвучено в Unison Studio (Coqui XTTS-v2)"
+    "credits": "Автор: Антон Павлович Чехов\nТекст: общественное достояние\nГолоса: встроенный голос XTTS-v2 «Andrew Chipper»; встроенный голос XTTS-v2 «Damjan Chapman»; встроенный голос XTTS-v2 «Sofia Hellen»; встроенный голос XTTS-v2 «Viktor Eka»; встроенный голос XTTS-v2 «Zacharie Aimilios»; чтец LibriVox (LibriVox, общественное достояние), «Человек в футляре».\nОзвучено в Unison Studio (Coqui XTTS-v2)",
+    "cover": "books/loshadinaya-familiya/cover.jpg",
+    "coverSm": "books/loshadinaya-familiya/cover-sm.jpg"
   }
 ]
