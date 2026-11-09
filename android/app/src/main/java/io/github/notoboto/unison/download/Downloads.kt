@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import okhttp3.Request
 import java.io.File
 
@@ -93,7 +94,33 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
         enqueue(b, b.chapters.filter { it.n > n }.take(k).map { it.n })
     }
 
-    fun usedBytes(): Long = app.repo.dlRoot.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    fun usedBytes(): Long = runCatching { app.repo.files.totalBytes() }.getOrDefault(0L)
+
+    // ---- "downloads finished" notification ----
+    private var okCount = 0; private var failCount = 0
+    @Synchronized fun finished(ok: Boolean) { if (ok) okCount++ else failCount++ }
+    init {
+        scope.launch {
+            var wasBusy = false
+            jobs.collect { m ->
+                if (m.isNotEmpty()) wasBusy = true
+                else if (wasBusy) { wasBusy = false; notifyDone() }
+            }
+        }
+    }
+    @Synchronized private fun notifyDone() {
+        val ok = okCount; val fail = failCount; okCount = 0; failCount = 0
+        if (!app.store.s.settings.notifyDownloads || ok + fail == 0) return
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("dl_done", "Загрузки завершены", NotificationManager.IMPORTANCE_DEFAULT))
+        val open = android.app.PendingIntent.getActivity(ctx, 1, android.content.Intent(ctx, io.github.notoboto.unison.MainActivity::class.java),
+            android.app.PendingIntent.FLAG_IMMUTABLE)
+        val text = "Скачано глав: $ok" + if (fail > 0) " • с ошибкой: $fail" else ""
+        runCatching {
+            nm.notify(3999, NotificationCompat.Builder(ctx, "dl_done").setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("Загрузки завершены").setContentText(text).setContentIntent(open).setAutoCancel(true).build())
+        }
+    }
 
     companion object { const val TAG = "dl" }
 }
@@ -120,8 +147,9 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         val key = inputData.getString("key")!!; val n = inputData.getInt("n", 0)
         runCatching { setForeground(foreground(0f)) }
         return try {
-            val dir = app.repo.dlDir(key)
-            val js = File(dir, "ch%03d.json.part".format(n)); val og = File(dir, "ch%03d.ogg.part".format(n))
+            val files = app.repo.files
+            val tmp = File(applicationContext.cacheDir, "dl_${key}_$n").apply { mkdirs() }
+            val js = File(tmp, "json"); val og = File(tmp, "ogg")
             fetch(inputData.getString("json")!!, js) { }
             var last = 0L
             fetch(inputData.getString("ogg")!!, og) { p ->
@@ -131,12 +159,14 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                     runCatching { setForeground(foreground(p)) }
                 }
             }
-            js.renameTo(app.repo.localJson(key, n).also { it.delete() })
-            og.renameTo(app.repo.localOgg(key, n).also { it.delete() })
+            files.write(key, n, "json") { out -> js.inputStream().use { it.copyTo(out) } }
+            files.write(key, n, "ogg") { out -> og.inputStream().use { it.copyTo(out) } }
+            tmp.deleteRecursively()
             app.store.markDownloaded(key, n, inputData.getString("v"))
+            app.downloads.finished(ok = true)
             Result.success()
         } catch (e: Exception) {
-            if (isStopped) Result.failure() else if (runAttemptCount < 3) Result.retry() else Result.failure()
+            if (isStopped) Result.failure() else if (runAttemptCount < 3) Result.retry() else { app.downloads.finished(ok = false); Result.failure() }
         }
     }
 

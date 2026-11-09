@@ -95,9 +95,15 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
         tickJob?.cancel()
         tickJob = scope.launch {
             var k = 0
+            var lastStat = System.currentTimeMillis()
             while (isActive) {
                 position.value = exo.currentPosition / 1000.0
-                if (++k % 25 == 0) saveNow()
+                if (++k % 25 == 0) {
+                    saveNow()
+                    val t = System.currentTimeMillis()
+                    now.value?.let { app.store.addListened(it.book.key, t - lastStat) }
+                    lastStat = t
+                }
                 delay(200)
             }
         }

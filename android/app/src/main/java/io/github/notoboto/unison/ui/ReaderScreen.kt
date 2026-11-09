@@ -35,6 +35,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.ui.input.pointer.PointerInputScope
+import io.github.notoboto.unison.data.Bookmark
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Pause
@@ -148,6 +154,8 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
     }
 
     var sleepSheet by remember { mutableStateOf(false) }
+    val zones = Zones(s.tapZones, s.tapZoneWidth) { dir -> player.skip(if (dir < 0) -s.skipBack else s.skipForward) }
+    var bmMenu by remember { mutableStateOf(false) }
     var speedMenu by remember { mutableStateOf(false) }
     var fontMenu by remember { mutableStateOf(false) }
     val playerMode = s.readerMode == "player"
@@ -157,8 +165,8 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
         when {
             error != null -> EmptyState("📡", error!!)
             t == null -> EmptyState("⏳", "Загружаю главу…")
-            playerMode -> PlayerMode(t, np?.book?.coverUrl, pos, playing, onToggleUi = { immersive = !immersive })
-            else -> TextMode(t, pos, s.fontSize, immersive, onTapEmpty = { immersive = !immersive }, onSeek = { player.seekTo(it); player.play() })
+            playerMode -> PlayerMode(t, np?.book?.coverUrl, pos, playing, zones, onToggleUi = { immersive = !immersive })
+            else -> TextMode(t, pos, s.fontSize, immersive, zones, onTapEmpty = { immersive = !immersive }, onSeek = { player.seekTo(it); player.play() })
         }
 
         AnimatedVisibility(!immersive, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
@@ -175,6 +183,29 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
                                 Text("${s.fontSize}", Modifier.width(32.dp), textAlign = TextAlign.Center)
                                 TextButton(onClick = { app.store.settings { it.copy(fontSize = (it.fontSize + 1).coerceAtMost(30)) } }) { Text("A+", fontSize = 18.sp) }
                             }
+                        }
+                    }
+                    Box {
+                        val cur = np
+                        val chMarks = cur?.let { c -> st.bookmarks[c.book.key].orEmpty().filter { it.n == c.n } }.orEmpty()
+                        IconButton(onClick = { bmMenu = true }) {
+                            Icon(if (chMarks.isNotEmpty()) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder, "Закладки",
+                                tint = if (chMarks.isNotEmpty()) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+                        }
+                        DropdownMenu(bmMenu, { bmMenu = false }) {
+                            DropdownMenuItem({ Text("Добавить закладку здесь") }, leadingIcon = { Icon(Icons.Filled.BookmarkAdd, null) }, onClick = {
+                                bmMenu = false
+                                val tt = text
+                                if (cur != null && tt != null) {
+                                    app.store.addBookmark(cur.book.key, Bookmark(cur.n, pos, sentenceAt(tt, pos)))
+                                    android.widget.Toast.makeText(ctx, "Закладка добавлена", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            })
+                            chMarks.forEach { bm ->
+                                DropdownMenuItem({ Text(fmt(bm.pos) + "  " + bm.quote, maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 14.sp) },
+                                    onClick = { bmMenu = false; player.seekTo(bm.pos) }, modifier = Modifier.widthIn(max = 320.dp))
+                            }
+                            if (cur != null) DropdownMenuItem({ Text("Все закладки книги") }, onClick = { bmMenu = false; nav.navigate("bookmarks/${cur.book.key}") })
                         }
                     }
                     IconButton(onClick = { sleepSheet = true }) {
@@ -254,7 +285,7 @@ private fun buildPara(toks: List<io.github.notoboto.unison.data.Tok>, colors: Li
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TextMode(t: ChapterText, pos: Double, fontSize: Int, immersive: Boolean, onTapEmpty: () -> Unit, onSeek: (Double) -> Unit) {
+private fun TextMode(t: ChapterText, pos: Double, fontSize: Int, immersive: Boolean, zones: Zones, onTapEmpty: () -> Unit, onSeek: (Double) -> Unit) {
     val colors = if (LocalIsDark.current) roleColorsDark else roleColorsLight
     val wi = t.wordAt(pos)
     val activePara = if (wi >= 0) t.timeline[wi].second else -1
@@ -281,7 +312,7 @@ private fun TextMode(t: ChapterText, pos: Double, fontSize: Int, immersive: Bool
         programmatic = false
     }
 
-    LazyColumn(state = lazy, modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onTapEmpty() } },
+    LazyColumn(state = lazy, modifier = Modifier.fillMaxSize().pointerInput(zones) { zones.detect(this) { onTapEmpty() } },
         contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = if (immersive) 24.dp else 110.dp, bottom = 260.dp)) {
         item {
             Text(t.title, Modifier.statusBarsPadding(), fontSize = (fontSize * 1.15).sp, fontWeight = FontWeight.Bold, lineHeight = (fontSize * 1.45).sp)
@@ -295,9 +326,9 @@ private fun TextMode(t: ChapterText, pos: Double, fontSize: Int, immersive: Bool
             val pi = idx + 1
             val pt = remember(t, pi, if (pi == activePara) activeTok else -1, colors) { buildPara(toks, colors, if (pi == activePara) activeTok else -1) }
             Text(pt.text, Modifier.widthIn(max = 720.dp).padding(bottom = (fontSize * 0.7).dp)
-                .pointerInput(pt) {
-                    detectTapGestures { off ->
-                        val lay = layouts[pi] ?: return@detectTapGestures
+                .pointerInput(pt, zones) {
+                    zones.detect(this) { off ->
+                        val lay = layouts[pi] ?: return@detect
                         val ch = lay.getOffsetForPosition(off)
                         var k = pt.starts.indexOfLast { it <= ch }
                         while (k >= 0 && toks[k].t == null) k--
@@ -325,7 +356,7 @@ private fun buildParaStart(t: ChapterText, pi: Int, tok: Int): Int {
 }
 
 @Composable
-private fun PlayerMode(t: ChapterText, cover: String?, pos: Double, playing: Boolean, onToggleUi: () -> Unit) {
+private fun PlayerMode(t: ChapterText, cover: String?, pos: Double, playing: Boolean, zones: Zones, onToggleUi: () -> Unit) {
     val colors = if (LocalIsDark.current) roleColorsDark else roleColorsLight
     val wi = t.wordAt(pos)
     val pi = if (wi >= 0) t.timeline[wi].second else 1
@@ -333,7 +364,7 @@ private fun PlayerMode(t: ChapterText, cover: String?, pos: Double, playing: Boo
     val para = t.paras.getOrNull(pi).orEmpty()
     val role = para.getOrNull(ti.coerceAtLeast(0))?.role ?: 0
     Column(Modifier.fillMaxSize().statusBarsPadding().padding(top = 72.dp, bottom = 250.dp, start = 24.dp, end = 24.dp)
-        .pointerInput(Unit) { detectTapGestures { onToggleUi() } },
+        .pointerInput(zones) { zones.detect(this) { onToggleUi() } },
         horizontalAlignment = Alignment.CenterHorizontally) {
         Cover(cover, Modifier.fillMaxWidth(0.62f).aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp)))
         Spacer(Modifier.height(18.dp))
@@ -352,4 +383,31 @@ private fun PlayerMode(t: ChapterText, cover: String?, pos: Double, playing: Boo
             Text(pt.text, fontSize = 19.sp, lineHeight = 28.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
         }
     }
+}
+
+/** Reader tap zones (Mihon-like): taps or double taps at the screen edges skip back / forward. */
+class Zones(val mode: String, val widthPct: Int, val onSkip: (Int) -> Unit) {
+    private fun zone(x: Float, w: Int): Int {
+        val f = x / w.coerceAtLeast(1); val z = widthPct / 100f
+        return if (f < z) -1 else if (f > 1 - z) 1 else 0
+    }
+    suspend fun detect(scope: PointerInputScope, onTap: (androidx.compose.ui.geometry.Offset) -> Unit) = with(scope) {
+        when (mode) {
+            "single" -> detectTapGestures { off -> val z = zone(off.x, size.width); if (z != 0) onSkip(z) else onTap(off) }
+            "double" -> detectTapGestures(onDoubleTap = { off -> val z = zone(off.x, size.width); if (z != 0) onSkip(z) }, onTap = onTap)
+            else -> detectTapGestures(onTap = onTap)
+        }
+    }
+    override fun equals(other: Any?) = other is Zones && other.mode == mode && other.widthPct == widthPct
+    override fun hashCode() = mode.hashCode() * 31 + widthPct
+}
+
+/** The sentence being spoken at [pos] (used as the bookmark quote). */
+fun sentenceAt(t: ChapterText, pos: Double): String {
+    val wi = t.wordAt(pos); if (wi < 0) return t.title
+    val (_, pi, ti) = t.timeline[wi]; val para = t.paras[pi]
+    val ends = { w: String -> w.trimEnd('»', '"', ')').let { it.endsWith('.') || it.endsWith('!') || it.endsWith('?') || it.endsWith('…') } }
+    var a = ti; while (a > 0 && !ends(para[a - 1].word)) a--
+    var b = ti; while (b < para.size - 1 && !ends(para[b].word)) b++
+    return para.subList(a, b + 1).joinToString(" ") { it.word }.take(300)
 }

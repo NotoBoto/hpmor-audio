@@ -29,6 +29,9 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.automirrored.filled.Label
+import androidx.compose.material.icons.filled.QueryStats
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -94,7 +97,13 @@ fun MoreScreen(nav: NavController) {
             Text("Книги в несколько голосов", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
         }
         HorizontalDivider()
+        SwitchRow("Только скачанное", "Показывать только скачанные главы и книги", st.settings.downloadedOnly) { v -> app.store.settings { it.copy(downloadedOnly = v) } }
+        SwitchRow("Инкогнито", "Не сохранять историю, прогресс и статистику", st.settings.incognito) { v -> app.store.settings { it.copy(incognito = v) } }
+        HorizontalDivider()
         Row1(Icons.Filled.Download, "Загрузки", "${chapters(n)} на телефоне") { nav.navigate("downloads") }
+        Row1(Icons.AutoMirrored.Filled.Label, "Категории", "Вкладки библиотеки") { nav.navigate("categories") }
+        Row1(Icons.Filled.QueryStats, "Статистика", "Время прослушивания, главы, книги") { nav.navigate("stats") }
+        Row1(Icons.Filled.Storage, "Хранилище", "Где хранить главы, кэш, место по книгам") { nav.navigate("storage") }
         Row1(Icons.Filled.Settings, "Настройки", "Тема, плеер, загрузки, резервная копия") { nav.navigate("settings") }
         Row1(Icons.Filled.Info, "О программе", "Версия ${BuildConfig.VERSION_NAME}, обновления, лицензии") { nav.navigate("about") }
     }
@@ -172,11 +181,32 @@ fun SettingsScreen(nav: NavController) {
                 SwitchRow("Не гасить экран", "Пока открыта глава и идёт воспроизведение", s.keepScreenOn) { v -> set { it.copy(keepScreenOn = v) } }
             }
             item {
+                SheetTitle("Главы")
+                val sw = listOf("read" to "Прослушано / не прослушано", "download" to "Скачать / удалить", "none" to "Ничего")
+                PickRow("Свайп вправо", s.swipeRight, sw) { v -> set { it.copy(swipeRight = v) } }
+                PickRow("Свайп влево", s.swipeLeft, sw) { v -> set { it.copy(swipeLeft = v) } }
+                PickRow("Зоны касания при чтении", s.tapZones, listOf("off" to "Выключены", "single" to "Касание у края — перемотка",
+                    "double" to "Двойное касание у края — перемотка")) { v -> set { it.copy(tapZones = v) } }
+                if (s.tapZones != "off") PickRow("Ширина зоны", s.tapZoneWidth, listOf(15, 20, 25, 33, 40).map { it to "$it% у каждого края" }) { v -> set { it.copy(tapZoneWidth = v) } }
+            }
+            item {
+                SheetTitle("Обновление библиотеки")
+                PickRow("Проверять новые главы", s.autoCheckHours, listOf(0 to "Вручную", 6 to "Каждые 6 часов", 12 to "Каждые 12 часов",
+                    24 to "Раз в день", 48 to "Раз в 2 дня", 168 to "Раз в неделю")) { v -> set { it.copy(autoCheckHours = v) }; io.github.notoboto.unison.scheduleLibraryCheck(ctx) }
+                if (s.autoCheckHours > 0) {
+                    SwitchRow("Только по Wi‑Fi", null, s.autoCheckWifi) { v -> set { it.copy(autoCheckWifi = v) }; io.github.notoboto.unison.scheduleLibraryCheck(ctx) }
+                    SwitchRow("Только на зарядке", null, s.autoCheckCharging) { v -> set { it.copy(autoCheckCharging = v) }; io.github.notoboto.unison.scheduleLibraryCheck(ctx) }
+                    SwitchRow("Скачивать новые главы", "Сразу после проверки", s.autoDownloadNew) { v -> set { it.copy(autoDownloadNew = v) } }
+                }
+            }
+            item {
                 SheetTitle("Загрузки")
                 SwitchRow("Только по Wi‑Fi", "Без Wi‑Fi загрузки ждут в очереди", s.wifiOnly) { v -> set { it.copy(wifiOnly = v) } }
                 PickRow("Скачивать наперёд", s.autoDownloadNext, listOf(0 to "Выключено", 1 to "1 главу", 2 to "2 главы", 3 to "3 главы", 5 to "5 глав", 10 to "10 глав")) { v -> set { it.copy(autoDownloadNext = v) } }
                 SwitchRow("Удалять прослушанные", "Глава удаляется с телефона, когда дослушана", s.autoDelete) { v -> set { it.copy(autoDelete = v) } }
                 SwitchRow("Обновлять переозвученные", "Скачанная глава заменяется новой версией сама", s.autoUpdate) { v -> set { it.copy(autoUpdate = v) } }
+                SwitchRow("Уведомлять о завершении", "«Скачано N глав» по окончании очереди", s.notifyDownloads) { v -> set { it.copy(notifyDownloads = v) } }
+                Row1(Icons.Filled.Storage, "Хранилище", "Где хранить главы, очистка кэша") { nav.navigate("storage") }
             }
             item {
                 SheetTitle("Резервная копия")

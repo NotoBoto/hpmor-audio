@@ -24,6 +24,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -119,7 +122,19 @@ fun LibraryScreen(nav: NavController) {
     val all = remember(st.library, catalogs, chapters) { app.repo.libraryBooks() }
     fun unread(b: Book) = b.chapters.count { st.progress[b.key]?.get(it.n)?.done != true }
     fun dled(b: Book) = st.downloaded[b.key].orEmpty().size
-    val books = all.filter { (!s.filterDownloaded || dled(it) > 0) && (!s.filterUnread || unread(it) > 0) }.let { l ->
+    var query by remember { mutableStateOf<String?>(null) }
+    var catTab by remember { mutableStateOf(0) }
+    // tabs: categories (+ "По умолчанию" for books without a category, if any)
+    val cats = st.categories
+    val uncategorized = all.filter { st.bookCategories[it.key].isNullOrEmpty() }
+    val tabs: List<Pair<String, List<Book>>> = if (cats.isEmpty()) listOf("" to all) else
+        (if (uncategorized.isNotEmpty()) listOf("По умолчанию" to uncategorized) else emptyList()) +
+            cats.map { c -> c.name to all.filter { c.id in st.bookCategories[it.key].orEmpty() } }
+    val tabIdx = catTab.coerceIn(0, (tabs.size - 1).coerceAtLeast(0))
+    val inTab = tabs.getOrNull(tabIdx)?.second ?: all
+    val q = query?.trim()?.lowercase().orEmpty()
+    val books = inTab.filter { (!s.filterDownloaded || dled(it) > 0) && (!s.filterUnread || unread(it) > 0) && (!s.downloadedOnly || dled(it) > 0) &&
+        (q.isEmpty() || it.meta.title.lowercase().contains(q) || it.meta.author.orEmpty().lowercase().contains(q)) }.let { l ->
         val sorted = when (s.libSort) {
             "last" -> l.sortedBy { b -> -(st.history.firstOrNull { it.book == b.key }?.ts ?: 0L) }
             "unread" -> l.sortedBy { -unread(it) }
@@ -134,7 +149,14 @@ fun LibraryScreen(nav: NavController) {
     val cont = { b: Book -> continueTarget(b, st)?.let { n -> app.player.open(b, n, autoplay = true); nav.navigate("reader/${b.key}/$n") }; Unit }
 
     Scaffold(topBar = {
-        TopAppBar(title = { Text("Библиотека") }, actions = {
+        Column { TopAppBar(title = {
+            if (query == null) Text("Библиотека")
+            else androidx.compose.material3.TextField(query!!, { query = it }, placeholder = { Text("Поиск по библиотеке") }, singleLine = true,
+                colors = androidx.compose.material3.TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent), modifier = Modifier.fillMaxWidth())
+        }, navigationIcon = { if (query != null) IconButton(onClick = { query = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Закрыть поиск") } },
+        actions = {
+            if (query == null) IconButton(onClick = { query = "" }) { Icon(androidx.compose.material.icons.Icons.Filled.Search, "Поиск") }
             IconButton(onClick = { sheet = true }) {
                 Icon(Icons.Filled.FilterList, "Фильтр, сортировка, вид", tint = if (filtered) MaterialTheme.colorScheme.primary else LocalContentColor.current)
             }
@@ -142,9 +164,12 @@ fun LibraryScreen(nav: NavController) {
                 Icon(Icons.Filled.Refresh, "Обновить")
             }
         })
+        if (tabs.size > 1) androidx.compose.material3.PrimaryScrollableTabRow(tabIdx, edgePadding = 8.dp) {
+            tabs.forEachIndexed { i, (name, list) -> Tab(i == tabIdx, { catTab = i }, text = { Text("$name (${list.size})") }) }
+        } }
     }, snackbarHost = { SnackbarHost(snack) }) { pad ->
         PullToRefreshBox(refreshing, onRefresh = { scope.launch { app.repo.refreshAll() } }, Modifier.padding(pad).fillMaxSize()) {
-            if (books.isEmpty()) EmptyState("📚", when { refreshing -> "Загружаю…"; filtered -> "Ничего не подходит под фильтр."
+            if (books.isEmpty()) EmptyState("📚", when { refreshing -> "Загружаю…"; filtered || q.isNotEmpty() || s.downloadedOnly -> "Ничего не найдено."
                 else -> "Библиотека пуста.\nДобавьте книги во вкладке «Обзор»." })
             else if (s.libDisplay == "list") LazyColumn(Modifier.fillMaxSize()) {
                 items(books, key = { it.key }) { b -> LibItem(b, "list", unread(b), dled(b), s, { open(b) }, { cont(b) }) }
@@ -282,7 +307,28 @@ fun BrowseScreen(nav: NavController) {
     Scaffold(topBar = {
         TopAppBar(title = { Text("Обзор") }, actions = { IconButton(onClick = { adding = true }) { Icon(Icons.Filled.Add, "Добавить источник") } })
     }, snackbarHost = { SnackbarHost(snack) }) { pad ->
+        var gq by remember { mutableStateOf("") }
         LazyColumn(Modifier.padding(pad)) {
+            item {
+                OutlinedTextField(gq, { gq = it }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), singleLine = true,
+                    placeholder = { Text("Поиск по всем источникам") },
+                    leadingIcon = { Icon(Icons.Filled.Search, null) },
+                    trailingIcon = { if (gq.isNotEmpty()) IconButton(onClick = { gq = "" }) { Icon(androidx.compose.material.icons.Icons.Filled.Close, "Очистить") } })
+            }
+            if (gq.isNotBlank()) {
+                val qq = gq.trim().lowercase()
+                val hits = st.sources.flatMap { src -> catalogs[src.url].orEmpty().filter { m ->
+                    listOf(m.title, m.author.orEmpty(), m.description.orEmpty(), m.tags.joinToString(" ")).any { it.lowercase().contains(qq) } }.map { src to it } }
+                item { GroupHeader(if (hits.isEmpty()) "Ничего не найдено" else "Найдено: ${hits.size}") }
+                items(hits, key = { (src, m) -> bookKey(src.url, m.id) }) { (src, m) ->
+                    val b = Book(src, m)
+                    ListItem(headlineContent = { Text(m.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text(listOfNotNull(m.author, src.name).joinToString(" • ")) },
+                        leadingContent = { Cover(b.coverSmUrl, Modifier.size(width = 40.dp, height = 56.dp)) },
+                        modifier = Modifier.clickable { nav.navigate("book/${b.key}") })
+                }
+                return@LazyColumn
+            }
             item { GroupHeader("Источники") }
             itemsIndexed(st.sources) { i, src ->
                 val n = catalogs[src.url]?.size

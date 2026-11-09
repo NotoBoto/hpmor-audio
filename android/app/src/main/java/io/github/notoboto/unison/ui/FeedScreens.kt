@@ -44,8 +44,9 @@ fun UpdatesScreen(nav: NavController) {
     val dlJobs by app.downloads.states.collectAsState()
     val refreshing by app.repo.refreshing.collectAsState()
     val scope = rememberCoroutineScope()
-    val items = remember(st.library, chaptersMap) {
-        app.repo.libraryBooks().flatMap { b -> b.chapters.mapNotNull { c -> parseDate(c.date)?.let { Triple(b, c, it) } } }
+    val items = remember(st.library, chaptersMap, st.settings.downloadedOnly, st.downloaded) {
+        app.repo.libraryBooks().flatMap { b -> b.chapters.filter { !st.settings.downloadedOnly || st.downloaded[b.key]?.containsKey(it.n) == true }
+            .mapNotNull { c -> parseDate(c.date)?.let { Triple(b, c, it) } } }
             .sortedWith(compareByDescending<Triple<*, *, LocalDateTime>> { it.third }).take(500)
     }
     LaunchedEffect(items) { items.firstOrNull()?.second?.date?.let { d -> if (d > st.seenUpdates) app.store.update { it.copy(seenUpdates = d) } } }

@@ -87,21 +87,27 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         pendingOpenPlayer = intent?.getBooleanExtra("openPlayer", false) == true
-        if (Build.VERSION.SDK_INT >= 33)
-            registerForActivityResult(ActivityResultContracts.RequestPermission()) {}.launch(Manifest.permission.POST_NOTIFICATIONS)
+        if (intent?.getBooleanExtra("openUpdates", false) == true) openUpdatesRequest.value = true
         setContent {
             val st by app().store.state.collectAsState()
-            UnisonTheme(st.settings) { AppRoot(openPlayer = pendingOpenPlayer.also { pendingOpenPlayer = false }) }
+            UnisonTheme(st.settings) {
+                if (!st.onboardingDone) androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.background) { io.github.notoboto.unison.ui.OnboardingScreen { app().store.update { it.copy(onboardingDone = true) } } }
+                else AppRoot(openPlayer = pendingOpenPlayer.also { pendingOpenPlayer = false })
+            }
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.getBooleanExtra("openUpdates", false)) openUpdatesRequest.value = true
         if (intent.getBooleanExtra("openPlayer", false)) openPlayerRequest.value = true
     }
     override fun onStop() { super.onStop(); app().player.saveNow(); app().store.flush() }
 
-    companion object { val openPlayerRequest = kotlinx.coroutines.flow.MutableStateFlow(false) }
+    companion object {
+        val openPlayerRequest = kotlinx.coroutines.flow.MutableStateFlow(false)
+        val openUpdatesRequest = kotlinx.coroutines.flow.MutableStateFlow(false)
+    }
 }
 
 private data class Tab(val route: String, val label: String, val on: ImageVector, val off: ImageVector)
@@ -128,10 +134,14 @@ fun AppRoot(openPlayer: Boolean) {
 
     LaunchedEffect(Unit) {
         app.repo.refreshAll()
+        if (app.store.s.knownChapters.isEmpty()) rememberChapterCounts(app)
+        scheduleLibraryCheck(app)
         app.updater.check()
         if (app.store.s.settings.autoUpdate) app.downloads.updateOutdated(app.repo.libraryBooks())
     }
     val openReq by MainActivity.openPlayerRequest.collectAsState()
+    val openUpd by MainActivity.openUpdatesRequest.collectAsState()
+    LaunchedEffect(openUpd) { if (openUpd) { nav.navigate("updates") { launchSingleTop = true }; MainActivity.openUpdatesRequest.value = false } }
     LaunchedEffect(openPlayer, openReq) {
         if (openPlayer || openReq) app.player.now.value?.let { nav.navigate("reader/${it.book.key}/${it.n}") { launchSingleTop = true } }
         MainActivity.openPlayerRequest.value = false
@@ -143,11 +153,14 @@ fun AppRoot(openPlayer: Boolean) {
         app.repo.libraryBooks().sumOf { b -> b.chapters.count { (it.date ?: "") > seen } }.takeIf { seen.isNotEmpty() } ?: 0
     }.also { chapters.size }
 
+    val wide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 600
+    val goTab = { t: String -> nav.navigate(t) { popUpTo("library") { saveState = true }; launchSingleTop = true; restoreState = true } }
     Scaffold(
         bottomBar = {
             if (topLevel) Column {
                 MiniPlayer(nav)
-                NavigationBar {
+                ModeStrip(st.settings)
+                if (!wide) NavigationBar {
                     TABS.forEach { t ->
                         val sel = route == t.route
                         NavigationBarItem(sel, onClick = {
@@ -161,7 +174,16 @@ fun AppRoot(openPlayer: Boolean) {
             }
         },
     ) { pad ->
-        Box(Modifier.padding(bottom = if (topLevel) pad.calculateBottomPadding() else 0.dp)) { NavGraph(nav) }
+        Row(Modifier.padding(bottom = if (topLevel) pad.calculateBottomPadding() else 0.dp)) {
+            if (wide && topLevel) androidx.compose.material3.NavigationRail(Modifier.padding(top = 24.dp)) {
+                TABS.forEach { t ->
+                    val sel = route == t.route
+                    androidx.compose.material3.NavigationRailItem(sel, onClick = { if (!sel) goTab(t.route) },
+                        icon = { Icon(if (sel) t.on else t.off, null) }, label = { Text(t.label, fontSize = 11.5.sp) })
+                }
+            }
+            Box(Modifier.weight(1f)) { NavGraph(nav) }
+        }
     }
 
     update?.let { rel ->
@@ -196,6 +218,10 @@ private fun NavGraph(nav: NavHostController) {
         composable("settings") { SettingsScreen(nav) }
         composable("downloads") { DownloadsScreen(nav) }
         composable("about") { AboutScreen(nav) }
+        composable("categories") { io.github.notoboto.unison.ui.CategoriesScreen(nav) }
+        composable("stats") { io.github.notoboto.unison.ui.StatsScreen(nav) }
+        composable("storage") { io.github.notoboto.unison.ui.StorageScreen(nav) }
+        composable("bookmarks/{key}") { io.github.notoboto.unison.ui.BookmarksScreen(nav, it.arguments?.getString("key")!!) }
         composable("catalog/{src}") { CatalogScreen(nav, it.arguments?.getString("src")!!.toInt()) }
         composable("book/{key}") { BookScreen(nav, it.arguments?.getString("key")!!) }
         composable("reader/{key}/{n}") { ReaderScreen(nav, it.arguments?.getString("key")!!, it.arguments?.getString("n")!!.toInt()) }
@@ -227,4 +253,13 @@ private fun MiniPlayer(nav: NavHostController) {
             }
         }
     }
+}
+
+/** Mihon-style strip for the global modes. */
+@Composable
+private fun ModeStrip(s: io.github.notoboto.unison.data.Settings) {
+    val parts = listOfNotNull("Только скачанное".takeIf { s.downloadedOnly }, "Инкогнито".takeIf { s.incognito })
+    if (parts.isEmpty()) return
+    Text(parts.joinToString(" • "), Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.primary).padding(vertical = 3.dp),
+        color = MaterialTheme.colorScheme.onPrimary, fontSize = 12.sp, fontWeight = FontWeight.Medium, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
 }

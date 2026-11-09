@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -108,7 +111,15 @@ fun BookScreen(nav: NavController, key: String) {
 
     val s = st.settings
     val prog = st.progress[key].orEmpty()
-    val list = if (s.sortDesc) book.chapters.reversed() else book.chapters
+    val marks = st.bookmarks[key].orEmpty()
+    val dledMap = st.downloaded[key].orEmpty()
+    val list = (if (s.sortDesc) book.chapters.reversed() else book.chapters).filter { c ->
+        (!s.chFilterDownloaded && !s.downloadedOnly || c.n in dledMap) && (!s.chFilterUnread || prog[c.n]?.done != true) &&
+            (!s.chFilterBookmarked || marks.any { it.n == c.n })
+    }
+    var catDialog by remember { mutableStateOf(false) }
+    var editDialog by remember { mutableStateOf(false) }
+    val ctx = LocalContext.current
     var sel by remember { mutableStateOf(setOf<Int>()) }
     var anchor by remember { mutableStateOf<Int?>(null) }
     var descOpen by remember { mutableStateOf(false) }
@@ -137,6 +148,43 @@ fun BookScreen(nav: NavController, key: String) {
     }
     fun open(n: Int) { app.player.open(book, n, autoplay = false); nav.navigate("reader/$key/$n") }
 
+    val wide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 600
+    val header: @Composable () -> Unit = {
+                Box {
+                AsyncImage(book.coverUrl, null, Modifier.matchParentSize().blur(18.dp), contentScale = ContentScale.Crop, alpha = .45f)
+                Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background))))
+                Row(Modifier.statusBarsPadding().padding(top = 64.dp, start = 16.dp, end = 16.dp, bottom = 12.dp)) {
+                    Cover(book.coverUrl, Modifier.width(112.dp).height(162.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Column {
+                        Text(book.meta.title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, lineHeight = 25.sp)
+                        Spacer(Modifier.height(8.dp))
+                        book.meta.author?.let { Meta(Icons.Outlined.Person, it) }
+                        book.meta.translator?.let { Meta(Icons.Outlined.Translate, it) }
+                        val total = book.chapters.sumOf { it.duration }
+                        Meta(Icons.Outlined.Schedule, "${hours(total)} • озвучено ${book.chapters.size}" + (book.meta.total?.let { " из $it" } ?: ""))
+                    }
+                }
+            }
+            Row(Modifier.padding(horizontal = 8.dp)) {
+                TextButton(onClick = {
+                    app.store.update { s2 -> if (inLib) s2.copy(library = s2.library.filter { io.github.notoboto.unison.data.bookKey(it.sourceUrl, it.bookId) != key })
+                        else s2.copy(library = s2.library + LibEntry(book.source.url, book.meta.id)) }
+                }) {
+                    Icon(if (inLib) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, null, Modifier.size(20.dp))
+                    Spacer(Modifier.width(6.dp)); Text(if (inLib) "В библиотеке" else "Добавить в библиотеку")
+                }
+            }
+            Column(Modifier.padding(horizontal = 16.dp).clickable { descOpen = !descOpen }) {
+                Text(book.meta.description.orEmpty(), fontSize = 14.5.sp, lineHeight = 21.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (descOpen) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis)
+                Icon(if (descOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null, Modifier.align(Alignment.CenterHorizontally))
+            }
+            FlowRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                book.meta.tags.forEach { AssistChip(onClick = {}, label = { Text(it, fontSize = 13.sp) }) }
+            }
+
+    }
     Scaffold(
         topBar = {
             if (sel.isNotEmpty()) TopAppBar(
@@ -171,6 +219,10 @@ fun BookScreen(nav: NavController, key: String) {
                             DropdownMenuItem({ Text("Удалить все скачанные") }, { menu = false; confirmDelete = true })
                             val old = app.downloads.outdated(listOf(book)).size
                             DropdownMenuItem({ Text("Обновить скачанные ($old)") }, { menu = false; app.downloads.updateOutdated(listOf(book)) }, enabled = old > 0)
+                            DropdownMenuItem({ Text("Закладки (${marks.size})") }, { menu = false; nav.navigate("bookmarks/$key") })
+                            DropdownMenuItem({ Text("Категории…") }, { menu = false; catDialog = true })
+                            DropdownMenuItem({ Text("Изменить…") }, { menu = false; editDialog = true })
+                            DropdownMenuItem({ Text("Поделиться") }, { menu = false; shareBook(ctx, book) })
                             DropdownMenuItem({ Text("Настройки") }, { menu = false; nav.navigate("settings") })
                         }
                     }
@@ -203,46 +255,11 @@ fun BookScreen(nav: NavController, key: String) {
         snackbarHost = { SnackbarHost(snack) },
         contentWindowInsets = WindowInsets(0),
     ) { pad ->
-        LazyColumn(state = lazy, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = pad.calculateBottomPadding() + 96.dp)) {
-            item(key = "hero") {
-                Box {
-                    AsyncImage(book.coverUrl, null, Modifier.matchParentSize().blur(18.dp), contentScale = ContentScale.Crop, alpha = .45f)
-                    Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background))))
-                    Row(Modifier.statusBarsPadding().padding(top = 64.dp, start = 16.dp, end = 16.dp, bottom = 12.dp)) {
-                        Cover(book.coverUrl, Modifier.width(112.dp).height(162.dp))
-                        Spacer(Modifier.width(16.dp))
-                        Column {
-                            Text(book.meta.title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, lineHeight = 25.sp)
-                            Spacer(Modifier.height(8.dp))
-                            book.meta.author?.let { Meta(Icons.Outlined.Person, it) }
-                            book.meta.translator?.let { Meta(Icons.Outlined.Translate, it) }
-                            val total = book.chapters.sumOf { it.duration }
-                            Meta(Icons.Outlined.Schedule, "${hours(total)} • озвучено ${book.chapters.size}" + (book.meta.total?.let { " из $it" } ?: ""))
-                        }
-                    }
-                }
-            }
-            item(key = "actions") {
-                Row(Modifier.padding(horizontal = 8.dp)) {
-                    TextButton(onClick = {
-                        app.store.update { s2 -> if (inLib) s2.copy(library = s2.library.filter { io.github.notoboto.unison.data.bookKey(it.sourceUrl, it.bookId) != key })
-                            else s2.copy(library = s2.library + LibEntry(book.source.url, book.meta.id)) }
-                    }) {
-                        Icon(if (inLib) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, null, Modifier.size(20.dp))
-                        Spacer(Modifier.width(6.dp)); Text(if (inLib) "В библиотеке" else "Добавить в библиотеку")
-                    }
-                }
-            }
-            item(key = "desc") {
-                Column(Modifier.padding(horizontal = 16.dp).clickable { descOpen = !descOpen }) {
-                    Text(book.meta.description.orEmpty(), fontSize = 14.5.sp, lineHeight = 21.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = if (descOpen) Int.MAX_VALUE else 3, overflow = TextOverflow.Ellipsis)
-                    Icon(if (descOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null, Modifier.align(Alignment.CenterHorizontally))
-                }
-                FlowRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    book.meta.tags.forEach { AssistChip(onClick = {}, label = { Text(it, fontSize = 13.sp) }) }
-                }
-            }
+        Row(Modifier.fillMaxSize()) {
+        if (wide) Column(Modifier.weight(0.42f).fillMaxHeight().verticalScroll(rememberScrollState())) { header() }
+        LazyColumn(state = lazy, modifier = Modifier.weight(if (wide) 0.58f else 1f).fillMaxHeight(),
+            contentPadding = PaddingValues(top = if (wide) 72.dp else 0.dp, bottom = pad.calculateBottomPadding() + 96.dp)) {
+            if (!wide) item(key = "header") { header() }
             item(key = "count") {
                 val dled = st.downloaded[key].orEmpty()
                 Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -252,18 +269,32 @@ fun BookScreen(nav: NavController, key: String) {
                         fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            if (list.isEmpty()) item { Text(if (book.chapters.isEmpty()) "Загружаю список глав…" else "Нет глав под выбранный фильтр",
+                Modifier.fillMaxWidth().padding(32.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             items(list, key = { it.n }) { ch ->
                 val p = prog[ch.n] ?: io.github.notoboto.unison.data.Progress()
-                ChapterRow(chName(ch, s.fullTitles), subline(p, ch), read = p.done, selected = ch.n in sel, dl = dl(ch.n),
+                val bm = marks.count { it.n == ch.n }
+                SwipeRow(s.swipeLeft, s.swipeRight, read = p.done, downloaded = ch.n in dledMap, enabled = sel.isEmpty(),
+                    onAction = { a -> when (a) {
+                        "read" -> app.store.setDone(key, listOf(ch.n), !p.done)
+                        "download" -> if (ch.n in dledMap) app.downloads.delete(book, listOf(ch.n)) else app.downloads.enqueue(book, listOf(ch.n))
+                    } }) {
+                ChapterRow(chName(ch, s.fullTitles), subline(p, ch) + (if (bm > 0) " • закладок: $bm" else ""), read = p.done, selected = ch.n in sel, dl = dl(ch.n),
                     onClick = { if (sel.isNotEmpty()) toggle(ch.n) else open(ch.n) }, onLongClick = { longPress(ch.n) },
                     onDownload = { app.downloads.enqueue(book, listOf(ch.n)) }, onCancel = { app.downloads.cancel(book, ch.n) },
                     onDelete = { app.downloads.delete(book, listOf(ch.n)) }, onUpdate = { app.downloads.enqueue(book, listOf(ch.n), force = true) })
+                }
             }
+        }
         }
     }
 
     if (filterSheet) ModalBottomSheet(onDismissRequest = { filterSheet = false }) {
         Column(Modifier.navigationBarsPadding().padding(bottom = 16.dp)) {
+            SheetTitle("Фильтр")
+            FilterCheck("Скачанные", s.chFilterDownloaded) { v -> app.store.settings { it.copy(chFilterDownloaded = v) } }
+            FilterCheck("Непрослушанные", s.chFilterUnread) { v -> app.store.settings { it.copy(chFilterUnread = v) } }
+            FilterCheck("С закладками", s.chFilterBookmarked) { v -> app.store.settings { it.copy(chFilterBookmarked = v) } }
             SheetTitle("Сортировка")
             Choice("Сначала последние", s.sortDesc) { app.store.settings { it.copy(sortDesc = true) } }
             Choice("По порядку, с первой главы", !s.sortDesc) { app.store.settings { it.copy(sortDesc = false) } }
@@ -272,6 +303,8 @@ fun BookScreen(nav: NavController, key: String) {
             Choice("«Глава N»", !s.fullTitles) { app.store.settings { it.copy(fullTitles = false) } }
         }
     }
+    if (catDialog) BookCategoriesDialog(key, onDismiss = { catDialog = false }, onManage = { catDialog = false; nav.navigate("categories") })
+    if (editDialog) EditBookDialog(book) { editDialog = false }
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false }, title = { Text("Удалить скачанные?") },
         text = { Text("Все скачанные главы «${book.shortTitle}» будут удалены с телефона. Прогресс прослушивания сохранится.") },
         confirmButton = { TextButton(onClick = { app.downloads.delete(book, book.chapters.map { it.n }); confirmDelete = false }) { Text("Удалить") } },
@@ -303,3 +336,80 @@ fun Choice(label: String, selected: Boolean, onClick: () -> Unit) =
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         RadioButton(selected, onClick); Text(label, fontSize = 16.sp)
     }
+
+fun shareBook(ctx: android.content.Context, book: Book) {
+    val url = book.source.url + "#/book/" + book.meta.id
+    val text = book.meta.title + (book.meta.author?.let { " — $it" } ?: "") + "\n" + url
+    ctx.startActivity(android.content.Intent.createChooser(
+        android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, text), null))
+}
+
+@Composable
+private fun FilterCheck(label: String, checked: Boolean, onChange: (Boolean) -> Unit) =
+    Row(Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.material3.Checkbox(checked, onChange); Text(label, fontSize = 16.sp)
+    }
+
+/** Mihon-like swipe on a chapter row: the action runs and the row springs back. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SwipeRow(left: String, right: String, read: Boolean, downloaded: Boolean, enabled: Boolean, onAction: (String) -> Unit, content: @Composable () -> Unit) {
+    if (!enabled || (left == "none" && right == "none")) { content(); return }
+    val state = androidx.compose.material3.rememberSwipeToDismissBoxState(confirmValueChange = { v ->
+        when (v) {
+            androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd -> onAction(right)
+            androidx.compose.material3.SwipeToDismissBoxValue.EndToStart -> onAction(left)
+            else -> {}
+        }
+        false
+    }, positionalThreshold = { it * 0.3f })
+    androidx.compose.material3.SwipeToDismissBox(state, enableDismissFromStartToEnd = right != "none", enableDismissFromEndToStart = left != "none",
+        backgroundContent = {
+            val dir = state.dismissDirection
+            val action = if (dir == androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd) right else left
+            val icon = when (action) { "read" -> if (read) Icons.Filled.RemoveDone else Icons.Filled.DoneAll; else -> if (downloaded) Icons.Filled.Delete else Icons.Filled.Download }
+            val label = when (action) { "read" -> if (read) "Не прослушано" else "Прослушано"; else -> if (downloaded) "Удалить" else "Скачать" }
+            Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primaryContainer).padding(horizontal = 24.dp),
+                horizontalArrangement = if (dir == androidx.compose.material3.SwipeToDismissBoxValue.StartToEnd) Arrangement.Start else Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, null, tint = MaterialTheme.colorScheme.onPrimaryContainer); Spacer(Modifier.width(8.dp))
+                Text(label, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+        }) { Box(Modifier.background(MaterialTheme.colorScheme.background)) { content() } }
+}
+
+@Composable
+private fun EditBookDialog(book: Book, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val app = ctx.app()
+    val cur = app.store.s.edits[book.key]
+    val original = remember(book.key) { app.repo.book(book.key)?.let { b -> app.store.s.edits[b.key]; b } }
+    var title by remember { mutableStateOf(cur?.title ?: book.meta.title) }
+    var cover by remember { mutableStateOf(cur?.cover) }
+    val pick = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()) { uri ->
+        uri?.let {
+            val f = java.io.File(java.io.File(ctx.filesDir, "covers").apply { mkdirs() }, "${book.key}_${System.currentTimeMillis()}.jpg")
+            ctx.contentResolver.openInputStream(it)?.use { i -> f.outputStream().use { o -> i.copyTo(o) } }
+            cover = f.toURI().toString()
+        }
+    }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Изменить книгу") }, text = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            androidx.compose.material3.OutlinedTextField(title, { title = it }, label = { Text("Название") })
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Cover(cover ?: book.coverSmUrl, Modifier.width(60.dp).height(86.dp))
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    TextButton(onClick = { pick.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Text("Выбрать обложку") }
+                    TextButton(onClick = { app.store.update { s -> s.copy(edits = s.edits - book.key) }; onDismiss() }) { Text("Вернуть исходные") }
+                }
+            }
+        }
+    }, confirmButton = {
+        TextButton(onClick = {
+            val orig = original?.let { app.repo.catalogs.value[it.source.url]?.find { m -> m.id == it.meta.id }?.title } ?: book.meta.title
+            app.store.update { s -> s.copy(edits = s.edits + (book.key to io.github.notoboto.unison.data.BookEdit(title.trim().takeIf { it.isNotBlank() && it != orig }, cover))) }
+            onDismiss()
+        }) { Text("Сохранить") }
+    }, dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } })
+}

@@ -72,7 +72,36 @@ data class Settings(
     val libSortDesc: Boolean = false,
     val filterDownloaded: Boolean = false,
     val filterUnread: Boolean = false,
+    // modes from "More"
+    val downloadedOnly: Boolean = false,
+    val incognito: Boolean = false,
+    // chapter list
+    val chFilterDownloaded: Boolean = false,
+    val chFilterUnread: Boolean = false,
+    val chFilterBookmarked: Boolean = false,
+    val swipeRight: String = "read",     // read | download | none
+    val swipeLeft: String = "download",
+    // reader tap zones: off | double | single; width in % of the screen on each side
+    val tapZones: String = "off",
+    val tapZoneWidth: Int = 25,
+    // background library check
+    val autoCheckHours: Int = 0,         // 0 = off
+    val autoCheckWifi: Boolean = true,
+    val autoCheckCharging: Boolean = false,
+    val autoDownloadNew: Boolean = false,
+    val notifyDownloads: Boolean = true,
+    // where chapters are stored: null = app storage, else SAF tree uri (e.g. SD card)
+    val storageUri: String? = null,
 )
+
+@Serializable
+data class Category(val id: Int, val name: String)
+
+@Serializable
+data class Bookmark(val n: Int, val pos: Double, val quote: String, val note: String = "", val ts: Long = System.currentTimeMillis())
+
+@Serializable
+data class BookEdit(val title: String? = null, val cover: String? = null)
 
 @Serializable
 data class AppState(
@@ -85,6 +114,14 @@ data class AppState(
     val settings: Settings = Settings(),
     val seenUpdates: String = "",
     val firstRunDone: Boolean = false,
+    val onboardingDone: Boolean = false,
+    val categories: List<Category> = emptyList(),
+    val bookCategories: Map<String, List<Int>> = emptyMap(),       // bookKey -> category ids
+    val bookmarks: Map<String, List<Bookmark>> = emptyMap(),       // bookKey -> bookmarks
+    val edits: Map<String, BookEdit> = emptyMap(),                 // bookKey -> user edits
+    val statsDays: Map<String, Long> = emptyMap(),                 // yyyy-MM-dd -> ms listened
+    val statsBooks: Map<String, Long> = emptyMap(),                // bookKey -> ms listened
+    val knownChapters: Map<String, Int> = emptyMap(),              // bookKey -> chapter count seen by the background check
 )
 
 val DEFAULT_SOURCE = Source("https://notoboto.github.io/unison/", "Unison")
@@ -105,7 +142,7 @@ fun bookKey(sourceUrl: String, id: String): String {
 /** A book from a concrete source, with its chapter list (may be empty until loaded). */
 data class Book(val source: Source, val meta: BookMeta, val chapters: List<ChapterMeta> = emptyList()) {
     val key: String get() = bookKey(source.url, meta.id)
-    fun abs(path: String?): String? = path?.let { if (it.startsWith("http")) it else source.url + it }
+    fun abs(path: String?): String? = path?.let { if (it.contains("://")) it else source.url + it }
     val coverUrl: String? get() = abs(meta.cover)
     val coverSmUrl: String? get() = abs(meta.coverSm ?: meta.cover)
     val indexUrl: String get() = source.url + meta.data + "index.json"

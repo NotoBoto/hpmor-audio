@@ -51,7 +51,9 @@ class Store(context: Context, scope: CoroutineScope) {
 
     // ---- progress helpers ----
     fun progress(book: String, n: Int): Progress = s.progress[book]?.get(n) ?: Progress()
-    fun setPos(book: String, n: Int, pos: Double, duration: Double) = update { st ->
+    private val incognito get() = s.settings.incognito
+
+    fun setPos(book: String, n: Int, pos: Double, duration: Double) = if (incognito) Unit else update { st ->
         val m = st.progress[book].orEmpty().toMutableMap()
         val old = m[n] ?: Progress()
         m[n] = old.copy(pos = pos, done = old.done || (duration > 0 && pos >= duration * 0.97))
@@ -62,7 +64,19 @@ class Store(context: Context, scope: CoroutineScope) {
         ns.forEach { n -> m[n] = if (done) (m[n] ?: Progress()).copy(done = true) else Progress() }
         st.copy(progress = st.progress + (book to m))
     }
-    fun opened(book: String, n: Int) = update { st ->
+    /** listening time for statistics */
+    fun addListened(book: String, ms: Long) = if (incognito || ms <= 0) Unit else update { st ->
+        val day = java.time.LocalDate.now().toString()
+        st.copy(statsDays = st.statsDays + (day to ((st.statsDays[day] ?: 0) + ms)),
+            statsBooks = st.statsBooks + (book to ((st.statsBooks[book] ?: 0) + ms)))
+    }
+    fun addBookmark(book: String, b: Bookmark) = update { st -> st.copy(bookmarks = st.bookmarks + (book to (st.bookmarks[book].orEmpty() + b).sortedWith(compareBy({ it.n }, { it.pos })))) }
+    fun removeBookmark(book: String, b: Bookmark) = update { st -> st.copy(bookmarks = st.bookmarks + (book to (st.bookmarks[book].orEmpty() - b))) }
+    fun editBookmark(book: String, b: Bookmark, note: String) = update { st ->
+        st.copy(bookmarks = st.bookmarks + (book to st.bookmarks[book].orEmpty().map { if (it == b) it.copy(note = note) else it }))
+    }
+
+    fun opened(book: String, n: Int) = if (incognito) update { it.copy(last = it.last + (book to n)) } else update { st ->
         st.copy(last = st.last + (book to n),
             history = (listOf(HistEntry(book, n, System.currentTimeMillis())) + st.history.filterNot { it.book == book && it.n == n }).take(300))
     }
