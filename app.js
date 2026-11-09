@@ -549,6 +549,7 @@ function renderMore() {
     <button class="row" data-p="downloads"><span class="ico">${ic('download')}</span><span class="txt">Загрузки<small>${nDl} ${plural(nDl, 'глава', 'главы', 'глав')} на телефоне</small></span></button>
     <button class="row" data-p="settings"><span class="ico">${ic('settings')}</span><span class="txt">Настройки<small>Тема, шрифт, скорость, экран</small></span></button>
     <button class="row" data-p="about"><span class="ico">${ic('info')}</span><span class="txt">О проекте<small>Авторы, лицензии, голоса</small></span></button>
+    <a class="row" href="https://github.com/NotoBoto/unison/releases/latest" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><span class="ico">${ic('download')}</span><span class="txt">Приложение для Android<small>Фоновое воспроизведение, таймер сна, загрузки</small></span></a>
     <a class="row" href="https://github.com/NotoBoto/unison" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><span class="ico">${ic('code')}</span><span class="txt">GitHub<small>Исходный код</small></span></a>`;
   v.hidden = false;
   $$('[data-p]', v).forEach((b) => (b.onclick = () => go('#/more/' + b.dataset.p)));
