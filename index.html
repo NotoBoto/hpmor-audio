@@ -1,49 +1,63 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>ГПиМРМ — аудиокнига</title>
-<meta name="theme-color" content="#1d1b26">
+<title>Unison — книги в несколько голосов</title>
+<meta name="description" content="Аудиокниги по ролям с синхронной подсветкой текста. Работает офлайн.">
+<meta name="theme-color" content="#1a1520">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header id="top">
-  <button id="back" class="icon" aria-label="К списку глав" hidden>‹</button>
-  <h1 id="title">Методы рационального мышления</h1>
-  <button id="fontDown" class="icon" aria-label="Шрифт меньше" hidden>A−</button>
-  <button id="fontUp" class="icon" aria-label="Шрифт больше" hidden>A+</button>
-  <button id="wake" class="icon" aria-label="Не гасить экран во время прослушивания" hidden>☀</button>
-  <button id="zen" class="icon" aria-label="Скрыть интерфейс" hidden>⛶</button>
-</header>
-
-<main id="list">
-  <section class="bar">
-    <span id="storage"></span>
-    <button id="dlAll">Скачать все</button>
+<div id="views">
+  <section id="v-library" class="view" hidden></section>
+  <section id="v-updates" class="view" hidden></section>
+  <section id="v-history" class="view" hidden></section>
+  <section id="v-more" class="view" hidden></section>
+  <section id="v-page" class="view" hidden></section>
+  <section id="v-book" class="view" hidden></section>
+  <section id="v-reader" class="view" hidden>
+    <header class="bar solid" id="rbar">
+      <button class="ib" id="rBack" aria-label="Назад"></button>
+      <h1 class="bar-title" id="rTitle"></h1>
+      <button class="ib" id="fontDown" aria-label="Шрифт меньше">A−</button>
+      <button class="ib" id="fontUp" aria-label="Шрифт больше">A+</button>
+      <button class="ib" id="wake" aria-label="Не гасить экран во время прослушивания"></button>
+      <button class="ib" id="zen" aria-label="Скрыть интерфейс"></button>
+    </header>
+    <article id="text"></article>
+    <nav class="chnav"><button id="prevCh">‹ Предыдущая</button><button id="nextCh">Следующая ›</button></nav>
   </section>
-  <ol id="chapters"></ol>
-</main>
-
-<main id="reader" hidden>
-  <article id="text"></article>
-  <nav class="chnav"><button id="prevCh">‹ Предыдущая</button><button id="nextCh">Следующая ›</button></nav>
-</main>
+</div>
 
 <footer id="player" hidden>
   <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Позиция">
-  <div class="row">
+  <div class="prow">
     <span id="time">0:00</span>
-    <button class="icon" id="rew" aria-label="Назад 15 секунд">↺15</button>
-    <button class="icon big" id="play" aria-label="Играть">▶</button>
-    <button class="icon" id="fwd" aria-label="Вперёд 15 секунд">15↻</button>
-    <button class="icon" id="speed" aria-label="Скорость">1×</button>
+    <button class="ib" id="rew" aria-label="Назад 15 секунд">↺15</button>
+    <button class="ib big" id="play" aria-label="Играть"></button>
+    <button class="ib" id="fwd" aria-label="Вперёд 15 секунд">15↻</button>
+    <button class="ib" id="speed" aria-label="Скорость">1×</button>
   </div>
   <button id="follow" hidden>↧ К текущему месту</button>
 </footer>
 
+<button id="fab" hidden><span class="fab-i"></span><span class="fab-t">Продолжить</span></button>
+<div id="selbar" hidden></div>
+
+<nav id="nav">
+  <button data-tab="library"><i></i><span>Библиотека</span></button>
+  <button data-tab="updates"><i></i><span>Обновления</span><b class="badge" hidden></b></button>
+  <button data-tab="history"><i></i><span>История</span></button>
+  <button data-tab="more"><i></i><span>Ещё</span></button>
+</nav>
+
+<div id="scrim" hidden></div>
+<div id="menu" hidden role="menu"></div>
+<div id="sheet" hidden></div>
+<div id="dialog" hidden></div>
 <div id="toast" hidden></div>
 <audio id="audio" preload="auto"></audio>
 <script src="app.js"></script>
