@@ -1,4 +1,13 @@
 import java.util.Properties
+import java.net.URI
+
+// Offline voice engine (sherpa-onnx with Piper phonemizer). Not stored in git: fetched once from the official release.
+val sherpaAar = file("libs/sherpa-onnx.aar")
+if (!sherpaAar.exists()) {
+    sherpaAar.parentFile.mkdirs()
+    URI("https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-1.13.8.aar").toURL()
+        .openStream().use { i: java.io.InputStream -> sherpaAar.outputStream().use { o -> i.copyTo(o) } }
+}
 
 plugins {
     id("com.android.application")
