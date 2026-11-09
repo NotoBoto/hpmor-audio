@@ -81,6 +81,7 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
             }
             val req = OneTimeWorkRequestBuilder<DownloadWorker>()
                 .setInputData(workDataOf("key" to b.key, "n" to n, "json" to b.chUrl(n, "json"), "ogg" to b.oggUrls(n).toTypedArray(),
+                    "img" to ch.images.map { b.imgUrl(it) }.toTypedArray(), "imgName" to ch.images.map { it.localName }.toTypedArray(),
                     "v" to (ch.v ?: "1"), "title" to "${b.shortTitle} — ${ch.title}"))
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(if (wifi) NetworkType.UNMETERED else NetworkType.CONNECTED).build())
                 .addTag(TAG).addTag("k:${b.key}:$n")
@@ -201,6 +202,15 @@ class DownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                         setProgress(Data.Builder().putFloat("p", p).build())
                         runCatching { setForeground(foreground(p)) }
                     }
+                }
+            }
+            // illustrations: small next to the audio; one that fails is fetched later by the reader (Repo.fillPictures)
+            val imgs = inputData.getStringArray("img").orEmpty(); val names = inputData.getStringArray("imgName").orEmpty()
+            imgs.forEachIndexed { i, url ->
+                val name = names.getOrNull(i) ?: return@forEachIndexed
+                runCatching {
+                    val f = File(tmp, "img$i"); fetch(url, f, false) { }
+                    files.writeFile(key, name) { out -> f.inputStream().use { it.copyTo(out) } }
                 }
             }
             files.write(key, n, "json") { out -> js.inputStream().use { it.copyTo(out) } }

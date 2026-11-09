@@ -1,6 +1,12 @@
 package io.github.notoboto.unison.ui
 
 import android.app.Activity
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.graphicsLayer
+import coil.compose.AsyncImage
+import io.github.notoboto.unison.data.ChapterImage
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -210,6 +216,18 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
         }
     }
     val playerMode = s.readerMode == "player"
+    // illustrations: index.json "images"; the downloaded copy when there is one, missing copies are fetched for offline
+    var pics by remember { mutableStateOf<Map<Int, List<Pair<String, ChapterImage>>>>(emptyMap()) }
+    var bigPic by remember { mutableStateOf<Pair<String, ChapterImage>?>(null) }
+    LaunchedEffect(np?.book?.key, np?.n, text) {
+        val cur = np ?: return@LaunchedEffect; val tt = text ?: return@LaunchedEffect
+        val b = app.repo.book(cur.book.key) ?: cur.book       // fresh chapter list: pictures may be newer than the player's copy
+        suspend fun load() = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            app.repo.pictures(b, cur.n).groupBy { it.second.after.coerceIn(0, (tt.paras.size - 1).coerceAtLeast(0)) }
+        }
+        pics = load()
+        if (pics.isNotEmpty() && app.repo.fillPictures(b, cur.n) > 0) pics = load()
+    }
 
     Box(Modifier.fillMaxSize().background(if (playerMode) MaterialTheme.colorScheme.background else look.bg)) {
         val t = text
@@ -219,8 +237,9 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
             playerMode || t.paras.size <= 1 -> PlayerMode(t, np?.book?.coverUrl, pos, look, zones, onToggleUi = { immersive = !immersive })
             else -> TextMode(t, pos, look, immersive, zones, focusRole, { focusRole = it }, readOnly, { visibleTime = it },
                 onTapEmpty = { immersive = !immersive }, onSeek = { player.seekTo(it); player.play() }, onLong = { wordMenu = it },
-                marks = np?.let { st.highlights[it.book.key] }.orEmpty())
+                marks = np?.let { st.highlights[it.book.key] }.orEmpty(), pics = pics, onPicture = { bigPic = it })
         }
+        bigPic?.let { PictureViewer(it, onClose = { bigPic = null }) }
 
         recapText?.let { r ->
             androidx.compose.material3.Card(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 70.dp, start = 12.dp, end = 12.dp).fillMaxWidth(),
@@ -425,7 +444,8 @@ private fun buildPara(toks: List<Tok>, colors: List<Color>, active: Int, look: L
 @Composable
 private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean, zones: Zones, focusRole: Int, onFocus: (Int) -> Unit,
                      readOnly: Boolean, onVisible: (Double) -> Unit, onTapEmpty: () -> Unit, onSeek: (Double) -> Unit,
-                     onLong: (WordHit) -> Unit, marks: List<io.github.notoboto.unison.data.Highlight> = emptyList()) {
+                     onLong: (WordHit) -> Unit, marks: List<io.github.notoboto.unison.data.Highlight> = emptyList(),
+                     pics: Map<Int, List<Pair<String, ChapterImage>>> = emptyMap(), onPicture: (Pair<String, ChapterImage>) -> Unit = {}) {
     val colors = if (look.lightBg) roleColorsLight else roleColorsDark
     val wi = t.wordAt(pos)
     val activePara = if (wi >= 0) t.timeline[wi].second else -1
@@ -466,6 +486,7 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
                 fontFamily = look.family, color = look.fg)
         }
         item {
+          Column {
             FlowRow(Modifier.padding(vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 t.roles.forEachIndexed { i, r ->
                     if (i > 0) Text("● $r", Modifier.clip(RoundedCornerShape(6.dp)).clickable { onFocus(if (focusRole == i) -1 else i) }
@@ -473,6 +494,9 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
                         fontSize = 13.sp, color = colors[(i - 1) % colors.size], fontWeight = if (focusRole == i) FontWeight.Bold else null)
                 }
             }
+            // pictures right after the title (start of a volume)
+            pics[0]?.forEach { ChapterPicture(it, look, viewport) { onPicture(it) } }
+          }
         }
         itemsIndexed(t.paras.drop(1)) { idx, toks ->
             val pi = idx + 1
@@ -484,6 +508,9 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
                 val ch = lay.getOffsetForPosition(off)
                 return pt.starts.indexOfLast { it <= ch }
             }
+            // the pictures go inside the paragraph's item, under its text: item indices stay "title, legend, paragraphs",
+            // so following the spoken word, search jumps and bookmarks keep their places
+            Column(Modifier.widthIn(max = 720.dp)) {
             Text(pt.text, Modifier.widthIn(max = 720.dp).padding(bottom = (fs * 0.7).dp)
                 .pointerInput(pt, activeZones) {
                     activeZones.detect(this, onTap = { off ->
@@ -504,6 +531,8 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
                 fontSize = fs.sp, lineHeight = (fs * look.lh).sp, fontFamily = look.family, color = look.fg,
                 style = MaterialTheme.typography.bodyLarge.copy(textIndent = TextIndent(firstLine = (fs * 1.2).sp)),
                 onTextLayout = { layouts[pi] = it })
+            pics[pi]?.forEach { ChapterPicture(it, look, viewport) { onPicture(it) } }
+            }
         }
     }
     // "back to current place" chip while the user scrolls away
@@ -511,6 +540,48 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
         if (!readOnly && System.currentTimeMillis() < userScrollUntil && !immersive) {
             Button(onClick = { userScrollUntil = 0; scope.launch { lazy.animateScrollToItem(itemOf(activePara)) } },
                 Modifier.align(Alignment.BottomCenter).padding(bottom = 210.dp)) { Text("↧ К текущему месту") }
+        }
+    }
+}
+
+/** An illustration between paragraphs: full width, at most 80% of the screen high, size known before it loads. */
+@Composable
+private fun ChapterPicture(p: Pair<String, ChapterImage>, look: Look, viewportPx: Float, onOpen: () -> Unit) {
+    val (model, im) = p
+    val maxH = with(LocalDensity.current) { (viewportPx * 0.8f).toDp() }
+    Column(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = (look.fs * 0.9).dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val ratio = if (im.w > 0 && im.h > 0) im.w.toFloat() / im.h else 0.7f
+            val h = minOf(maxWidth / ratio, maxH)
+            AsyncImage(model = model, contentDescription = im.cap ?: "Иллюстрация", contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxWidth().height(h).clip(RoundedCornerShape(6.dp)).clickable(onClick = onOpen))
+        }
+        im.cap?.let { Text(it, Modifier.padding(top = 4.dp), fontSize = (look.fs * 0.8).sp, color = look.fg.copy(alpha = .7f)) }
+    }
+}
+
+/** Full-screen picture: pinch to zoom, drag to look around, double tap to zoom in / out; back or a tap closes. */
+@Composable
+private fun PictureViewer(p: Pair<String, ChapterImage>, onClose: () -> Unit) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        var scale by remember { mutableStateOf(1f) }
+        var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+        Box(Modifier.fillMaxSize().background(Color.Black)
+            .pointerInput(Unit) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    scale = (scale * zoom).coerceIn(1f, 5f)
+                    offset = if (scale == 1f) androidx.compose.ui.geometry.Offset.Zero else offset + pan
+                }
+            }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onDoubleTap = { if (scale > 1f) { scale = 1f; offset = androidx.compose.ui.geometry.Offset.Zero } else scale = 2.5f },
+                    onTap = { if (scale == 1f) onClose() })
+            }) {
+            AsyncImage(model = p.first, contentDescription = p.second.cap ?: "Иллюстрация", contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y))
+            p.second.cap?.let { Text(it, Modifier.align(Alignment.BottomCenter).padding(16.dp), color = Color.White.copy(alpha = .85f)) }
         }
     }
 }

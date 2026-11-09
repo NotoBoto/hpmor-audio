@@ -31,7 +31,16 @@ data class ChapterMeta(
     val date: String? = null,
     /** sizes of the byte pieces chNNN.ogg.1, .2, ... when the audio is published split (host file-size cap) */
     val parts: List<Long>? = null,
+    /** illustrations between paragraphs (Unison Studio books) */
+    val images: List<ChapterImage> = emptyList(),
 )
+
+/** A picture after paragraph [after] of the chapter (index in "paras", 0 = title); [src] is relative to the data folder. */
+@Serializable
+data class ChapterImage(val after: Int, val src: String, val w: Int = 0, val h: Int = 0, val cap: String? = null) {
+    /** file name of the downloaded copy, next to the chapter files */
+    val localName: String get() = "img_" + src.substringAfterLast('/')
+}
 
 @Serializable
 data class Source(val url: String, val name: String)
@@ -206,6 +215,8 @@ data class Book(val source: Source, val meta: BookMeta, val chapters: List<Chapt
     fun streamUri(n: Int): String = chapters.find { it.n == n }?.parts?.let { chUrl(n, "ogg") + "#parts=" + it.joinToString(",") }
         ?: chUrl(n, "ogg")
     val shortTitle: String get() = meta.short ?: meta.title
+    fun images(n: Int): List<ChapterImage> = chapters.find { it.n == n }?.images.orEmpty()
+    fun imgUrl(im: ChapterImage): String = if (im.src.contains("://")) im.src else dataUrl + im.src
 }
 
 /** Parsed chapter text with word timings. */

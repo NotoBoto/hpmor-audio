@@ -17,6 +17,11 @@ interface ChapterFiles {
     fun delete(key: String, n: Int)
     fun bookBytes(key: String): Long
     fun totalBytes(): Long
+    // other files of a book (illustrations), by name
+    fun hasFile(key: String, name: String): Boolean
+    fun writeFile(key: String, name: String, block: (OutputStream) -> Unit)
+    fun fileUri(key: String, name: String): String
+    fun deleteFile(key: String, name: String)
 }
 
 private fun name(n: Int, ext: String) = "ch%03d.%s".format(n, ext)
@@ -36,6 +41,15 @@ class InternalFiles(context: Context) : ChapterFiles {
     override fun delete(key: String, n: Int) { f(key, n, "json").delete(); f(key, n, "ogg").delete() }
     override fun bookBytes(key: String) = File(root, key).listFiles()?.sumOf { it.length() } ?: 0L
     override fun totalBytes() = root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    private fun file(key: String, name: String) = File(File(root, key).apply { mkdirs() }, name)
+    override fun hasFile(key: String, name: String) = file(key, name).exists()
+    override fun writeFile(key: String, name: String, block: (OutputStream) -> Unit) {
+        val target = file(key, name); val part = File(target.parentFile, "$name.part")
+        part.outputStream().use(block)
+        target.delete(); part.renameTo(target)
+    }
+    override fun fileUri(key: String, name: String) = file(key, name).toURI().toString()
+    override fun deleteFile(key: String, name: String) { file(key, name).delete() }
 }
 
 class SafFiles(private val context: Context, treeUri: String) : ChapterFiles {
@@ -58,4 +72,15 @@ class SafFiles(private val context: Context, treeUri: String) : ChapterFiles {
     override fun delete(key: String, n: Int) { doc(key, n, "json")?.delete(); doc(key, n, "ogg")?.delete() }
     override fun bookBytes(key: String) = root.findFile(key)?.listFiles()?.sumOf { it.length() } ?: 0L
     override fun totalBytes() = root.listFiles().sumOf { d -> d.listFiles().sumOf { it.length() } }
+    override fun hasFile(key: String, name: String) = root.findFile(key)?.findFile(name)?.exists() == true
+    override fun writeFile(key: String, name: String, block: (OutputStream) -> Unit) {
+        val d = dir(key)
+        d.findFile("$name.part")?.delete()
+        val part = d.createFile("application/octet-stream", "$name.part")!!
+        context.contentResolver.openOutputStream(part.uri, "wt")!!.use(block)
+        d.findFile(name)?.delete()
+        part.renameTo(name)
+    }
+    override fun fileUri(key: String, name: String) = root.findFile(key)!!.findFile(name)!!.uri.toString()
+    override fun deleteFile(key: String, name: String) { root.findFile(key)?.findFile(name)?.delete() }
 }

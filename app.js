@@ -129,6 +129,10 @@ matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTh
 let books = [];               // books.json + .chapters
 const bookById = (id) => books.find((b) => b.id === id);
 const chUrl = (b, n, ext) => `${b.data}ch${pad(n)}.${ext}`;
+// illustrations of a chapter: index.json "images": [{after, src, w, h, cap?}], src relative to the book's data folder;
+// after = index in the chapter's paras (0 = title). Downloaded with the chapter into the same cache.
+const chImages = (b, n) => b.chapters.find((c) => c.n === n)?.images || [];
+const imgUrl = (b, im) => new URL(im.src, new URL(b.data, location.href)).href;
 // Chapter audio from the network. A chapter over the host's file-size cap is published as byte pieces
 // chNNN.ogg.1, .2, ... (index.json: "parts": [sizes]); they are joined back into the original file.
 async function fetchOgg(b, n, signal, onProgress, cache = 'default') {
@@ -259,11 +263,28 @@ async function runJob(j) {
     }, 'reload');
     await c.put(chUrl(b, j.n, 'json'), new Response(jsonBlob, { headers: { 'content-type': 'application/json' } }));
     await c.put(chUrl(b, j.n, 'ogg'), new Response(ogg, { headers: { 'content-type': 'audio/ogg' } }));
+    await cacheImages(b, j.n, j.ctrl.signal);
     downloaded.add(key(j.b, j.n)); bs(j.b).dlv[j.n] = meta.v || '1'; saveBs(j.b);
   } catch (e) {
     if (e.name !== 'AbortError') toast(`Глава ${j.n}: не удалось скачать`);
   }
   dlJobs.delete(key(j.b, j.n)); paintDl(j.b, j.n); refreshLibraryBadges(); pump();
+}
+// pictures of a downloaded chapter (also fills in chapters downloaded before their pictures were published)
+async function cacheImages(b, n, signal) {
+  const c = await caches.open(DATA_CACHE);
+  for (const im of chImages(b, n)) {
+    const url = imgUrl(b, im);
+    if (await c.match(url)) continue;
+    try { const r = await fetch(url, { cache: 'reload', signal }); if (r.ok) await c.put(url, r); }
+    catch (e) { if (e.name === 'AbortError') throw e; }
+  }
+}
+async function fillImages() {
+  if (!navigator.onLine) return;
+  for (const b of books) for (const ch of b.chapters) if (ch.images?.length && downloaded.has(key(b.id, ch.n))) {
+    try { await cacheImages(b, ch.n); } catch {}
+  }
 }
 function cancelDl(b, n) { const j = dlJobs.get(key(b, n)); if (!j) return; j.ctrl?.abort(); dlJobs.delete(key(b, n)); paintDl(b, n); pump(); }
 async function removeDl(b, ns) {
@@ -271,6 +292,7 @@ async function removeDl(b, ns) {
   for (const n of ns) {
     cancelDl(b, n);
     await c.delete(chUrl(book, n, 'json')); await c.delete(chUrl(book, n, 'ogg'));
+    for (const im of chImages(book, n)) await c.delete(imgUrl(book, im));
     downloaded.delete(key(b, n)); delete bs(b).dlv[n]; paintDl(b, n);
   }
   saveBs(b); refreshLibraryBadges(); refreshDownloadsPage();
@@ -387,7 +409,13 @@ function render() {
 }
 const scrollMemo = {};
 addEventListener('scroll', () => { if (route.v && route.v !== 'read') scrollMemo[location.hash] = scrollY; onScrollBar(); }, { passive: true });
-addEventListener('popstate', render);
+// the full-screen picture is one history step: "back" closes it and stays in the reader
+addEventListener('popstate', (e) => {
+  if (lbOpen) { closePicture(true); return; }
+  if (lbBack) { lbBack = false; return; }
+  if (e.state?.lb) { history.back(); return; }
+  render();
+});
 $$('#nav button').forEach((b) => (b.onclick = () => { const h = '#/' + b.dataset.tab; if (location.hash !== h) go(h); else window.scrollTo({ top: 0, behavior: 'smooth' }); }));
 $$('#nav i').forEach((i, k) => (i.innerHTML = ic(TABS[k])));
 
@@ -1161,6 +1189,9 @@ function buildText() {
   cur.roles.forEach((r, i) => { const x = document.createElement('button'); x.type = 'button'; x.textContent = '● ' + r; x.dataset.role = i;
     if (i) x.style.color = roleColor(i); legend.appendChild(x); });
   const endRe = /[.!?…]["»”)\]]*$/;
+  const pics = {};   // pictures after paragraph pi (past the end of the chapter: after the last one)
+  (chImages(curBook, cur.n).length ? chImages(curBook, cur.n) : cur.images || [])
+    .forEach((im) => (pics[Math.min(Math.max(0, +im.after || 0), cur.paras.length - 1)] ||= []).push(im));
   cur.paras.forEach((toks, pi) => {
     const el = document.createElement(pi === 0 ? 'h2' : 'p'), frag = document.createDocumentFragment(), row = [];
     let si = -1, fresh = true;
@@ -1174,9 +1205,43 @@ function buildText() {
       if (pi > 0 && endRe.test(w)) fresh = true;
     });
     tokEls.push(row); el.appendChild(frag); art.appendChild(el); if (pi === 0) art.appendChild(legend);
+    (pics[pi] || []).forEach((im) => art.appendChild(figure(im)));
   });
   words.sort((a, c) => a.t - c.t);
 }
+// a picture between paragraphs: size reserved from w/h, so lazy loading never shifts the text being followed
+function figure(im) {
+  const f = document.createElement('figure'); f.className = 'ill';
+  const img = document.createElement('img'); img.loading = 'lazy'; img.decoding = 'async'; img.alt = im.cap || 'Иллюстрация';
+  // definite width + aspect-ratio: the box has its final size before the picture loads (never upscaled, ≤ 80% screen high)
+  if (im.w && im.h) { img.width = im.w; img.height = im.h; img.style.aspectRatio = `${im.w} / ${im.h}`; img.style.width = `min(100%, ${im.w}px, calc(80vh * ${im.w / im.h}))`; }
+  img.src = imgUrl(curBook, im); f.appendChild(img);
+  if (im.cap) { const c = document.createElement('figcaption'); c.textContent = im.cap; f.appendChild(c); }
+  return f;
+}
+// full-screen view: tap / Esc / back closes, double tap or the button zooms to full size (then scroll to look around)
+function openPicture(img) {
+  const lb = $('#lightbox'), big = $('img', lb);
+  big.src = img.currentSrc || img.src; big.alt = img.alt; lb.classList.remove('zoom'); lb.hidden = false;
+  $('#lbCap').textContent = img.closest('figure')?.querySelector('figcaption')?.textContent || '';
+  history.pushState({ lb: 1 }, '', location.hash); lbOpen = true;
+}
+let lbOpen = false, lbBack = false;
+function closePicture(fromPop) {
+  if (!lbOpen) return; lbOpen = false; $('#lightbox').hidden = true; $('#lightbox img').removeAttribute('src');
+  if (!fromPop) { lbBack = true; history.back(); }   // drop the history entry the picture added
+}
+(() => {
+  const lb = $('#lightbox'); let lastTap = 0;
+  $('#lbClose').innerHTML = ic('close'); $('#lbZoom').innerHTML = ic('full');
+  $('#lbClose').onclick = (e) => { e.stopPropagation(); closePicture(); };
+  $('#lbZoom').onclick = (e) => { e.stopPropagation(); lb.classList.toggle('zoom'); };
+  lb.addEventListener('click', (e) => {
+    if (e.target.tagName === 'IMG') { const now = Date.now(); if (now - lastTap < 350) lb.classList.toggle('zoom'); lastTap = now; return; }
+    closePicture();
+  });
+  addEventListener('keydown', (e) => { if (e.key === 'Escape' && lbOpen) closePicture(); });
+})();
 let autoplayNext = false;
 function leaveReader() { if (readOnly) syncToFirstVisible(); setReadOnly(false, true); saveNow(); audio.pause(); statFlush(); setZen(false); }
 function findWord(t) { let lo = 0, hi = words.length - 1, ans = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (words[m].t <= t + 0.05) { ans = m; lo = m + 1; } else hi = m - 1; } return ans; }
@@ -1243,11 +1308,13 @@ let wordLpAt = 0;
 $('#v-reader').addEventListener('click', (e) => {
   if (Date.now() - wordLpAt < 700) return;
   const lg = e.target.closest('.legend [data-role]'); if (lg) { toggleRole(+lg.dataset.role); return; }
+  const fig = e.target.closest('#text figure.ill');
   if (readOnly) {
     if (e.target.closest('#rbar, .chnav, button')) return;
-    const x = e.clientX / innerWidth; if (x < 0.25) pageTurn(-1); else if (x > 0.75) pageTurn(1);
+    const x = e.clientX / innerWidth; if (x < 0.25) pageTurn(-1); else if (x > 0.75) pageTurn(1); else if (fig) openPicture($('img', fig));
     return;
   }
+  if (fig) { openPicture($('img', fig)); return; }
   if (!e.target.closest('#text')) return;
   if (document.body.classList.contains('zen')) { setZen(false); return; }
   const t = e.target.dataset && e.target.dataset.t; if (t == null) return;
@@ -1520,6 +1587,7 @@ function setMediaSession() {
   await loadData();
   await migrateMovedData();
   await scanDownloads();
+  fillImages();
   if (!location.hash || location.hash === '#') history.replaceState(null, '', books.length === 1 ? '#/library' : '#/library');
   render();
   paintBadge(); paintModes();
