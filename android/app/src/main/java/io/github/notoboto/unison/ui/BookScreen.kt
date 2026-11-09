@@ -30,7 +30,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.PlaylistAddCheck
+import androidx.compose.material.icons.filled.VerticalAlignBottom
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoneAll
@@ -193,6 +193,11 @@ fun BookScreen(nav: NavController, key: String) {
                 actions = {
                     IconButton(onClick = { sel = book.chapters.map { it.n }.toSet() }) { Icon(Icons.Filled.SelectAll, "Выбрать все") }
                     IconButton(onClick = { sel = book.chapters.map { it.n }.toSet() - sel }) { Icon(Icons.Filled.FlipToBack, "Инвертировать") }
+                    // add every chapter shown below the selection in the list (selection only, nothing is marked)
+                    IconButton(onClick = {
+                        val order = list.map { it.n }; val last = order.indexOfLast { it in sel }
+                        if (last >= 0) sel = sel + order.drop(last + 1)
+                    }) { Icon(Icons.Filled.VerticalAlignBottom, "Выбрать все ниже") }
                 })
             else TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = if (scrolled) MaterialTheme.colorScheme.surfaceContainer else Color.Transparent),
@@ -240,9 +245,6 @@ fun BookScreen(nav: NavController, key: String) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         SelAction(Icons.Filled.DoneAll, "Прослушано") { app.store.setDone(key, sel, true); sel = emptySet() }
                         SelAction(Icons.Filled.RemoveDone, "Не прослушано") { app.store.setDone(key, sel, false); sel = emptySet() }
-                        SelAction(Icons.AutoMirrored.Filled.PlaylistAddCheck, "Предыдущие") {
-                            val mx = sel.max(); app.store.setDone(key, book.chapters.filter { it.n < mx }.map { it.n }, true); sel = emptySet()
-                        }
                         SelAction(Icons.Filled.Download, "Скачать") { app.downloads.enqueue(book, sel); sel = emptySet() }
                         SelAction(Icons.Filled.Delete, "Удалить") { app.downloads.delete(book, sel); sel = emptySet() }
                     }
@@ -326,11 +328,13 @@ private fun Meta(icon: androidx.compose.ui.graphics.vector.ImageVector, text: St
     }
 
 @Composable
-private fun SelAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) =
-    Column(Modifier.clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(horizontal = 6.dp, vertical = 4.dp),
+private fun androidx.compose.foundation.layout.RowScope.SelAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) =
+    // equal share of the bar for every action; long labels ("Не прослушано") wrap instead of squeezing the last one
+    Column(Modifier.weight(1f).clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(horizontal = 2.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(icon, label)
-        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, fontSize = 11.sp, lineHeight = 13.sp, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 
 @Composable
