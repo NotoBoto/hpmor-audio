@@ -59,3 +59,8 @@ footer#player { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; backg
   background: var(--accent); color: #fff; border: none; font-size: 14px; box-shadow: 0 2px 8px #0004; }
 #toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 130px; z-index: 9; background: var(--fg);
   color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 14px; max-width: 90vw; }
+
+/* zen: interface hidden, text only */
+body.zen header, body.zen footer#player { display: none; }
+body.zen #reader { padding-top: max(16px, env(safe-area-inset-top)); padding-bottom: 45vh; }
+body.zen .chnav { display: none; }

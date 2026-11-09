@@ -125,7 +125,7 @@ async function openChapter(n, autoplay = false) {
   });
   words.sort((a, b) => a.t - b.t);
   $('#list').hidden = true; $('#reader').hidden = false; $('#player').hidden = false;
-  $('#back').hidden = false; $('#fontUp').hidden = false; $('#fontDown').hidden = false;
+  $('#back').hidden = false; $('#fontUp').hidden = false; $('#fontDown').hidden = false; $('#wake').hidden = false; $('#zen').hidden = false;
   $('#title').textContent = cur.title;
   $('#prevCh').disabled = !index.find((c) => c.n === n - 1) && index[0].n === n;
   history.replaceState(null, '', '#' + n);
@@ -195,6 +195,7 @@ function saveNow() { if (cur && audio.src && !isNaN(audio.currentTime)) store.se
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); else if (cur) tick(true); });
 
 $('#text').addEventListener('click', (e) => {
+  if (document.body.classList.contains('zen')) { setZen(false); return; }  // in zen a tap only brings UI back
   const t = e.target.dataset && e.target.dataset.t;
   if (t == null) return;
   audio.currentTime = +t; followUntil = 0; tick(true);
@@ -218,10 +219,44 @@ $('#back').onclick = showList;
 function setFont(d) { const v = Math.min(30, Math.max(14, store.get('fs', 19) + d)); store.set('fs', v); document.documentElement.style.setProperty('--fs', v + 'px'); }
 $('#fontUp').onclick = () => setFont(1); $('#fontDown').onclick = () => setFont(-1);
 
+// ---------- keep screen on while playing (Screen Wake Lock) ----------
+let wakeLock = null;
+async function updateWake() {
+  const want = store.get('wake', true) && !audio.paused && !document.hidden;
+  try {
+    if (want && !wakeLock && 'wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!want && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch {}
+}
+function markWake() { const on = store.get('wake', true); $('#wake').style.opacity = on ? 1 : .35;
+  $('#wake').setAttribute('aria-pressed', on); }
+$('#wake').onclick = () => { store.set('wake', !store.get('wake', true)); markWake(); updateWake();
+  toast(store.get('wake', true) ? 'Экран не будет гаснуть во время прослушивания' : 'Экран гаснет как обычно'); };
+markWake();
+audio.addEventListener('play', updateWake);
+audio.addEventListener('pause', updateWake);
+document.addEventListener('visibilitychange', updateWake);
+
+// ---------- hide interface (zen) ----------
+function setZen(on) {
+  if (document.body.classList.contains('zen') === on) return;
+  document.body.classList.toggle('zen', on);
+  const d = document;
+  try {
+    if (on && d.documentElement.requestFullscreen && !d.fullscreenElement) d.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+    if (!on && d.fullscreenElement) d.exitFullscreen().catch(() => {});
+  } catch {}
+  if (on) { followUntil = 0; setTimeout(() => scrollToActive(true), 300); }
+}
+$('#zen').onclick = () => { setZen(true); toast('Нажмите на текст, чтобы вернуть интерфейс'); };
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) setZen(false); });
+
 function showList() {
   saveNow(); audio.pause();
   $('#list').hidden = false; $('#reader').hidden = true; $('#player').hidden = true;
-  $('#back').hidden = true; $('#fontUp').hidden = true; $('#fontDown').hidden = true;
+  $('#back').hidden = true; $('#fontUp').hidden = true; $('#fontDown').hidden = true; $('#wake').hidden = true; $('#zen').hidden = true; setZen(false);
   $('#title').textContent = 'Методы рационального мышления';
   history.replaceState(null, '', '#');
   renderList();

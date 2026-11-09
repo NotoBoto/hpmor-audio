@@ -1,5 +1,5 @@
 // App shell is precached; chapter data is cached explicitly by the page ("Скачать").
-const SHELL = 'hpmor-shell-v2';
+const SHELL = 'hpmor-shell-v3';
 const DATA = 'hpmor-data-v1';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
