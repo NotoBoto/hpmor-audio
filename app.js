@@ -197,11 +197,13 @@ async function migrateOldCache() {
 }
 // a book's data folder moved (HPMOR: github.io/unison/data/ -> Cloudflare data/ -> Cloudflare books/hpmor/):
 // re-key downloaded chapters to the current address, so they stay downloaded
-const MOVED = { hpmor: [new URL('data/', location.href).href, 'https://unison-audio.pages.dev/data/'] };
+// earlier homes of a book's data: GitHub Pages, then the shared Cloudflare project (now: one project per book)
+const movedFrom = (b) => [new URL(`books/${b.id}/`, location.href).href, `https://unison-audio.pages.dev/books/${b.id}/`,
+  ...(b.id === 'hpmor' ? [new URL('data/', location.href).href, 'https://unison-audio.pages.dev/data/'] : [])];
 async function migrateMovedData() {
   try {
     const c = await caches.open(DATA_CACHE);
-    for (const req of await c.keys()) for (const b of books) for (const from of MOVED[b.id] || []) {
+    for (const req of await c.keys()) for (const b of books) for (const from of movedFrom(b)) {
       const to = new URL(b.data, location.href).href;
       if (from === to || !req.url.startsWith(from)) continue;
       const r = await c.match(req);
