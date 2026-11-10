@@ -78,6 +78,7 @@ data class Settings(
     val libColumns: Int = 0,             // 0 = automatic
     val badgeUnread: Boolean = true,
     val badgeDownloaded: Boolean = true,
+    val catCounts: Boolean = false,       // number of books in the category tabs (off, as in Mihon)
     val libContinueButton: Boolean = false,
     val libSort: String = "title",       // title | last | unread | added | chapters
     val libSortDesc: Boolean = false,

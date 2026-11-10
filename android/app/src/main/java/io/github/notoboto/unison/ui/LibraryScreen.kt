@@ -198,7 +198,7 @@ fun LibraryScreen(nav: NavController) {
             }
         })
         if (tabs.size > 1) androidx.compose.material3.PrimaryScrollableTabRow(tabIdx, edgePadding = 8.dp) {
-            tabs.forEachIndexed { i, (name, list) -> Tab(i == tabIdx, { catTab = i }, text = { Text("$name (${list.size})") }) }
+            tabs.forEachIndexed { i, (name, list) -> Tab(i == tabIdx, { catTab = i }, text = { Text(if (s.catCounts) "$name (${list.size})" else name) }) }
         } }
     }, bottomBar = {
         androidx.compose.animation.AnimatedVisibility(selected.isNotEmpty(),
@@ -404,6 +404,7 @@ private fun LibrarySheet(onClose: () -> Unit) {
                     CheckRow("Скачанные главы", s.badgeDownloaded) { v -> set { it.copy(badgeDownloaded = v) } }
                     SheetTitle("Прочее")
                     CheckRow("Кнопка «Продолжить» на обложке", s.libContinueButton) { v -> set { it.copy(libContinueButton = v) } }
+                    CheckRow("Число книг во вкладках категорий", s.catCounts) { v -> set { it.copy(catCounts = v) } }
                 }
             }
         }

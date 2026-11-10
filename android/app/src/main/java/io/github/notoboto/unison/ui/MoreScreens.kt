@@ -1,5 +1,11 @@
 package io.github.notoboto.unison.ui
 
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.Security
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -135,7 +141,7 @@ private fun <T> PickRow(title: String, value: T, options: List<Pair<T, String>>,
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(nav: NavController) {
+fun SettingsScreen(nav: NavController, section: String? = null) {
     val ctx = LocalContext.current
     val app = ctx.app()
     val st by app.store.state.collectAsState()
@@ -168,10 +174,23 @@ fun SettingsScreen(nav: NavController) {
         }
     }
 
-    Scaffold(topBar = { BackBar(nav, "Настройки") }, snackbarHost = { SnackbarHost(snack) }) { pad ->
+    val sections = listOf(
+        Triple("appearance", "Внешний вид", "Тема, цвета, названия глав") to Icons.Filled.Palette,
+        Triple("library", "Библиотека", "Свайпы по главам, проверка новых глав") to Icons.AutoMirrored.Filled.LibraryBooks,
+        Triple("player", "Плеер", "Скорость, перемотка, звук, таймер сна") to Icons.Filled.Headphones,
+        Triple("reader", "Читалка", "Экран, зоны касания, подсказки") to Icons.AutoMirrored.Filled.MenuBook,
+        Triple("downloads", "Загрузки", "Wi‑Fi, скачивание наперёд, место") to Icons.Filled.Download,
+        Triple("tts", "Синтезатор речи", "Озвучка своих книг, голоса Piper") to Icons.Filled.RecordVoiceOver,
+        Triple("habit", "Привычка", "Цель на день, напоминание") to Icons.Filled.EmojiEvents,
+        Triple("data", "Данные и хранение", "Резервные копии, синхронизация прогресса") to Icons.Filled.Storage,
+        Triple("security", "Безопасность", "Блокировка приложения, скрытие в недавних") to Icons.Filled.Security,
+    )
+    val title = sections.find { it.first.first == section }?.first?.second ?: "Настройки"
+    Scaffold(topBar = { BackBar(nav, title) }, snackbarHost = { SnackbarHost(snack) }) { pad ->
         LazyColumn(Modifier.padding(pad)) {
             item {
-                SheetTitle("Внешний вид")
+                when (section) {
+                    "appearance" -> {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text("Тема", fontSize = 16.sp); Spacer(Modifier.height(8.dp))
                     val opts = listOf("dark" to "Тёмная", "light" to "Светлая", "system" to "Система")
@@ -185,16 +204,25 @@ fun SettingsScreen(nav: NavController) {
                 SwitchRow("Чёрный фон", "Для AMOLED-экранов, в тёмной теме", s.amoled) { v -> set { it.copy(amoled = v) } }
                 PickRow("Размер текста", s.fontSize, (14..30 step 1).map { it to "$it" }) { v -> set { it.copy(fontSize = v) } }
                 SwitchRow("Полные названия глав", "Иначе — «Глава N»", s.fullTitles) { v -> set { it.copy(fullTitles = v) } }
-            }
-            item {
-                SheetTitle("Плеер")
+                    }
+                    "library" -> {
+                SheetTitle("Главы")
+                val sw = listOf("read" to "Прослушано / не прослушано", "download" to "Скачать / удалить", "none" to "Ничего")
+                PickRow("Свайп вправо", s.swipeRight, sw) { v -> set { it.copy(swipeRight = v) } }
+                PickRow("Свайп влево", s.swipeLeft, sw) { v -> set { it.copy(swipeLeft = v) } }
+                SheetTitle("Обновление библиотеки")
+                PickRow("Проверять новые главы", s.autoCheckHours, listOf(0 to "Вручную", 6 to "Каждые 6 часов", 12 to "Каждые 12 часов",
+                    24 to "Раз в день", 48 to "Раз в 2 дня", 168 to "Раз в неделю")) { v -> set { it.copy(autoCheckHours = v) }; io.github.notoboto.unison.scheduleLibraryCheck(ctx) }
+                if (s.autoCheckHours > 0) {
+                    SwitchRow("Только по Wi‑Fi", null, s.autoCheckWifi) { v -> set { it.copy(autoCheckWifi = v) }; io.github.notoboto.unison.scheduleLibraryCheck(ctx) }
+                    SwitchRow("Только на зарядке", null, s.autoCheckCharging) { v -> set { it.copy(autoCheckCharging = v) }; io.github.notoboto.unison.scheduleLibraryCheck(ctx) }
+                    SwitchRow("Скачивать новые главы", "Сразу после проверки", s.autoDownloadNew) { v -> set { it.copy(autoDownloadNew = v) } }
+                }
+                    }
+                    "player" -> {
                 PickRow("Скорость по умолчанию", s.speed, listOf(0.8f, 0.9f, 1f, 1.1f, 1.25f, 1.5f, 1.75f, 2f).map { it to "${it}×".replace('.', ',') }) { v -> app.player.setSpeed(v) }
                 PickRow("Перемотка назад", s.skipBack, listOf(5, 10, 15, 30, 60).map { it to "$it с" }) { v -> set { it.copy(skipBack = v) } }
                 PickRow("Перемотка вперёд", s.skipForward, listOf(5, 10, 15, 30, 60).map { it to "$it с" }) { v -> set { it.copy(skipForward = v) } }
-                SwitchRow("Не гасить экран", "Пока открыта глава и идёт воспроизведение", s.keepScreenOn) { v -> set { it.copy(keepScreenOn = v) } }
-                PickRow("«Ранее в книге»", s.recapAfterHours, listOf(0 to "Не показывать", 6 to "После перерыва от 6 ч", 12 to "После перерыва от 12 ч",
-                    24 to "После перерыва от суток", 72 to "После перерыва от 3 дней")) { v -> set { it.copy(recapAfterHours = v) } }
-                SwitchRow("Подсказки глоссария", "«Кто это?» в меню долгого нажатия на слово", s.glossaryHints) { v -> set { it.copy(glossaryHints = v) } }
                 SwitchRow("Пропускать паузы", "Длинная тишина между фразами сокращается", s.skipSilence) { v -> set { it.copy(skipSilence = v) } }
                 PickRow("Усиление голоса", s.voiceBoost, listOf(0 to "Выключено", 3 to "+3 дБ", 6 to "+6 дБ", 9 to "+9 дБ", 12 to "+12 дБ")) { v -> set { it.copy(voiceBoost = v) } }
                 SwitchRow("Старт при подключении наушников", "Проводные, Bluetooth и автомобиль — продолжить с последнего места", s.autoStartHeadphones) { v -> set { it.copy(autoStartHeadphones = v) } }
@@ -211,35 +239,17 @@ fun SettingsScreen(nav: NavController) {
                     PickRow("До", s.sleepTo, hh) { v -> set { it.copy(sleepTo = v) } }
                     PickRow("Длительность таймера", s.sleepScheduleMin, listOf(10, 15, 20, 30, 45, 60, 90).map { it to "$it мин" }) { v -> set { it.copy(sleepScheduleMin = v) } }
                 }
-            }
-            item {
-                SheetTitle("Привычка")
-                PickRow("Цель на день", s.goalMin, listOf(0 to "Без цели", 10 to "10 мин", 15 to "15 мин", 20 to "20 мин", 30 to "30 мин", 45 to "45 мин", 60 to "1 час", 90 to "1,5 часа")) { v -> set { it.copy(goalMin = v) } }
-                SwitchRow("Напоминание", "Если сегодня ещё не слушали или цель не выполнена", s.reminderOn) { v -> set { it.copy(reminderOn = v) }; io.github.notoboto.unison.Habits.schedule(ctx) }
-                if (s.reminderOn) PickRow("Время напоминания", s.reminderAt, (6 * 2 until 24 * 2).map { it * 30 to "%02d:%02d".format(it * 30 / 60, it * 30 % 60) }) { v ->
-                    set { it.copy(reminderAt = v) }; io.github.notoboto.unison.Habits.schedule(ctx) }
-            }
-            item {
-                SheetTitle("Главы")
-                val sw = listOf("read" to "Прослушано / не прослушано", "download" to "Скачать / удалить", "none" to "Ничего")
-                PickRow("Свайп вправо", s.swipeRight, sw) { v -> set { it.copy(swipeRight = v) } }
-                PickRow("Свайп влево", s.swipeLeft, sw) { v -> set { it.copy(swipeLeft = v) } }
+                    }
+                    "reader" -> {
+                SwitchRow("Не гасить экран", "Пока открыта глава и идёт воспроизведение", s.keepScreenOn) { v -> set { it.copy(keepScreenOn = v) } }
+                PickRow("«Ранее в книге»", s.recapAfterHours, listOf(0 to "Не показывать", 6 to "После перерыва от 6 ч", 12 to "После перерыва от 12 ч",
+                    24 to "После перерыва от суток", 72 to "После перерыва от 3 дней")) { v -> set { it.copy(recapAfterHours = v) } }
+                SwitchRow("Подсказки глоссария", "«Кто это?» в меню долгого нажатия на слово", s.glossaryHints) { v -> set { it.copy(glossaryHints = v) } }
                 PickRow("Зоны касания при чтении", s.tapZones, listOf("off" to "Выключены", "single" to "Касание у края — перемотка",
                     "double" to "Двойное касание у края — перемотка")) { v -> set { it.copy(tapZones = v) } }
                 if (s.tapZones != "off") PickRow("Ширина зоны", s.tapZoneWidth, listOf(15, 20, 25, 33, 40).map { it to "$it% у каждого края" }) { v -> set { it.copy(tapZoneWidth = v) } }
-            }
-            item {
-                SheetTitle("Обновление библиотеки")
-                PickRow("Проверять новые главы", s.autoCheckHours, listOf(0 to "Вручную", 6 to "Каждые 6 часов", 12 to "Каждые 12 часов",
-                    24 to "Раз в день", 48 to "Раз в 2 дня", 168 to "Раз в неделю")) { v -> set { it.copy(autoCheckHours = v) }; io.github.notoboto.unison.scheduleLibraryCheck(ctx) }
-                if (s.autoCheckHours > 0) {
-                    SwitchRow("Только по Wi‑Fi", null, s.autoCheckWifi) { v -> set { it.copy(autoCheckWifi = v) }; io.github.notoboto.unison.scheduleLibraryCheck(ctx) }
-                    SwitchRow("Только на зарядке", null, s.autoCheckCharging) { v -> set { it.copy(autoCheckCharging = v) }; io.github.notoboto.unison.scheduleLibraryCheck(ctx) }
-                    SwitchRow("Скачивать новые главы", "Сразу после проверки", s.autoDownloadNew) { v -> set { it.copy(autoDownloadNew = v) } }
-                }
-            }
-            item {
-                SheetTitle("Загрузки")
+                    }
+                    "downloads" -> {
                 SwitchRow("Только по Wi‑Fi", "Без Wi‑Fi загрузки ждут в очереди", s.wifiOnly) { v -> set { it.copy(wifiOnly = v) } }
                 PickRow("Скачивать наперёд", s.autoDownloadNext, listOf(0 to "Выключено", 1 to "1 главу", 2 to "2 главы", 3 to "3 главы", 5 to "5 глав", 10 to "10 глав")) { v -> set { it.copy(autoDownloadNext = v) } }
                 SwitchRow("Удалять прослушанные", "Глава удаляется с телефона, когда дослушана", s.autoDelete) { v -> set { it.copy(autoDelete = v) } }
@@ -248,29 +258,46 @@ fun SettingsScreen(nav: NavController) {
                 Row1(Icons.Filled.Storage, "Хранилище", "Где хранить главы, очистка кэша") { nav.navigate("storage") }
                 PickRow("Лимит места", s.storageLimitGb, listOf(0 to "Без лимита", 1 to "1 ГБ", 2 to "2 ГБ", 5 to "5 ГБ", 10 to "10 ГБ", 20 to "20 ГБ")) { v ->
                     set { it.copy(storageLimitGb = v) }; app.downloads.enforceLimit() }
-            }
-            item {
-                SheetTitle("Синтезатор речи (свои книги)")
+                    }
+                    "tts" -> {
                 Row1(Icons.Filled.RecordVoiceOver, "Голоса Piper и чтение по ролям", if (s.ttsEngine == "piper") "Включены нейросетевые голоса" else "Сейчас: системный синтезатор") { nav.navigate("voices") }
                 PickRow("Скорость речи", s.ttsRate, listOf(0.7f, 0.85f, 1f, 1.15f, 1.3f, 1.5f).map { it to "${it}×".replace('.', ',') }) { v -> set { it.copy(ttsRate = v) } }
                 PickRow("Высота голоса", s.ttsPitch, listOf(0.8f, 0.9f, 1f, 1.1f, 1.2f).map { it to "${it}".replace('.', ',') }) { v -> set { it.copy(ttsPitch = v) } }
                 Row1(Icons.Filled.RecordVoiceOver, "Голос и движок", "Системные настройки синтеза речи") {
                     runCatching { ctx.startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                 }
-                SheetTitle("Синхронизация")
-                Text("Перенос прогресса между телефоном, планшетом и сайтом: сохраните файл на одном устройстве и загрузите на другом. Данные сливаются: остаётся самое свежее.",
-                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row1(Icons.Filled.Upload, "Сохранить файл прогресса", "Прогресс, закладки, история, категории") { syncOut.launch("unison-progress_" + java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm", java.util.Locale.US).format(java.util.Date()) + ".json") }
-                Row1(Icons.Filled.Download, "Загрузить файл прогресса", "С сайта или другого устройства") { syncIn.launch(arrayOf("application/json", "*/*")) }
-                SheetTitle("Безопасность")
-                SwitchRow("Блокировка приложения", "Отпечаток, лицо или PIN телефона при входе", s.appLock) { v -> set { it.copy(appLock = v) } }
-                if (s.appLock) PickRow("Блокировать снова", s.lockAfterMin, listOf(0 to "Сразу после выхода", 1 to "Через 1 мин", 5 to "Через 5 мин", 15 to "Через 15 мин", 60 to "Через час")) { v -> set { it.copy(lockAfterMin = v) } }
-                SwitchRow("Скрывать в недавних", "Содержимое не видно в списке приложений и на скриншотах", s.hideInRecents) { v -> set { it.copy(hideInRecents = v) } }
+                    }
+                    "habit" -> {
+                PickRow("Цель на день", s.goalMin, listOf(0 to "Без цели", 10 to "10 мин", 15 to "15 мин", 20 to "20 мин", 30 to "30 мин", 45 to "45 мин", 60 to "1 час", 90 to "1,5 часа")) { v -> set { it.copy(goalMin = v) } }
+                SwitchRow("Напоминание", "Если сегодня ещё не слушали или цель не выполнена", s.reminderOn) { v -> set { it.copy(reminderOn = v) }; io.github.notoboto.unison.Habits.schedule(ctx) }
+                if (s.reminderOn) PickRow("Время напоминания", s.reminderAt, (6 * 2 until 24 * 2).map { it * 30 to "%02d:%02d".format(it * 30 / 60, it * 30 % 60) }) { v ->
+                    set { it.copy(reminderAt = v) }; io.github.notoboto.unison.Habits.schedule(ctx) }
+                    }
+                    "data" -> {
                 SheetTitle("Резервная копия")
                 Row1(Icons.Filled.Backup, "Создать резервную копию", "Библиотека, прогресс, история, настройки, источники") { exportLauncher.launch(backupFileName()) }
                 Row1(Icons.Filled.Refresh, "Восстановить из файла", null) { importLauncher.launch(arrayOf("application/json", "*/*")) }
                 SwitchRow("Автоматически раз в день", s.autoBackupUri?.let { "Папка: " + Uri.parse(it).lastPathSegment } ?: "Выберите папку", s.autoBackupUri != null) { on ->
                     if (on) folderLauncher.launch(null) else { set { it.copy(autoBackupUri = null) }; scheduleAutoBackup(ctx) }
+                }
+                SheetTitle("Синхронизация")
+                Text("Перенос прогресса между телефоном, планшетом и сайтом: сохраните файл на одном устройстве и загрузите на другом. Данные сливаются: остаётся самое свежее.",
+                    Modifier.padding(horizontal = 16.dp, vertical = 4.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row1(Icons.Filled.Upload, "Сохранить файл прогресса", "Прогресс, закладки, история, категории") { syncOut.launch("unison-progress_" + java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm", java.util.Locale.US).format(java.util.Date()) + ".json") }
+                Row1(Icons.Filled.Download, "Загрузить файл прогресса", "С сайта или другого устройства") { syncIn.launch(arrayOf("application/json", "*/*")) }
+                SheetTitle("Хранилище")
+                Row1(Icons.Filled.Storage, "Хранилище", "Где хранить главы, кэш, место по книгам") { nav.navigate("storage") }
+                    }
+                    "security" -> {
+                SwitchRow("Блокировка приложения", "Отпечаток, лицо или PIN телефона при входе", s.appLock) { v -> set { it.copy(appLock = v) } }
+                if (s.appLock) PickRow("Блокировать снова", s.lockAfterMin, listOf(0 to "Сразу после выхода", 1 to "Через 1 мин", 5 to "Через 5 мин", 15 to "Через 15 мин", 60 to "Через час")) { v -> set { it.copy(lockAfterMin = v) } }
+                SwitchRow("Скрывать в недавних", "Содержимое не видно в списке приложений и на скриншотах", s.hideInRecents) { v -> set { it.copy(hideInRecents = v) } }
+                    }
+                    else -> sections.forEach { (t, icon) ->
+                        ListItem(headlineContent = { Text(t.second) }, supportingContent = { Text(t.third) },
+                            leadingContent = { Icon(icon, null, tint = MaterialTheme.colorScheme.primary) },
+                            modifier = Modifier.clickable { nav.navigate("settings/${t.first}") }.padding(vertical = 4.dp))
+                    }
                 }
             }
         }

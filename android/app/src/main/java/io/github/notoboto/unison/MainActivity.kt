@@ -279,6 +279,7 @@ private fun NavGraph(nav: NavHostController) {
         composable("browse") { BrowseScreen(nav) }
         composable("more") { MoreScreen(nav) }
         composable("settings") { SettingsScreen(nav) }
+        composable("settings/{section}") { SettingsScreen(nav, it.arguments?.getString("section")) }
         composable("downloads") { DownloadsScreen(nav) }
         composable("about") { AboutScreen(nav) }
         composable("categories") { io.github.notoboto.unison.ui.CategoriesScreen(nav) }
