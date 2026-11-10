@@ -1,4 +1,6 @@
-# HPMOR is served from Cloudflare Pages (cf/books/hpmor/, built by ../scripts/build_web.py, uploaded by night.py),
-# like the Unison Studio books. data/ is only the local build folder; books/hpmor/ holds the cover sources.
+# This repo holds only the apps (site + Android). Book data and the list of books (books.json) live on Cloudflare
+# Pages and are uploaded only by Unison Studio (../Unison Studio): https://unison-catalog-7q7.pages.dev/books.json
+# and one project per book (https://unison-<id>.pages.dev/). books.json here is a frozen copy for app versions
+# before 1.1.8; it is no longer updated.
 data/
-books/hpmor/
+books/

@@ -186,6 +186,12 @@ data class AppState(
 
 val DEFAULT_SOURCE = Source("https://notoboto.github.io/unison/", "Unison")
 
+/** The built-in source's list of books lives on Cloudflare (uploaded by Unison Studio; the app repo holds only the
+ *  apps). The source keeps its old address as its identity, so book keys — progress, downloads — stay the same. */
+const val DEFAULT_CATALOG = "https://unison-catalog-7q7.pages.dev/books.json"
+
+fun catalogUrl(src: Source): String = if (src.url == DEFAULT_SOURCE.url) DEFAULT_CATALOG else src.url + "books.json"
+
 fun normalizeSource(url: String): String {
     var u = url.trim()
     if (!u.startsWith("http")) u = "https://$u"

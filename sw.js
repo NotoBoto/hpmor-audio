@@ -1,8 +1,8 @@
 // Unison service worker: app shell precached; chapter files live in DATA (filled by the page's "Скачать").
-const SHELL = 'unison-shell-v3';
+const SHELL = 'unison-shell-v4';
 const DATA = 'unison-data-v1';
 const KEEP = [SHELL, DATA, 'hpmor-data-v1'];  // old data cache is migrated by the page, then deleted
-const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'books.json'];
+const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));

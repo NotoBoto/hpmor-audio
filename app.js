@@ -126,6 +126,8 @@ function applyTheme() {
 matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', applyTheme);
 
 // ---------- data ----------
+// the list of books lives on Cloudflare, uploaded by Unison Studio (this repo holds only the apps)
+const CATALOG = 'https://unison-catalog-7q7.pages.dev/books.json';
 let books = [];               // books.json + .chapters
 const bookById = (id) => books.find((b) => b.id === id);
 const chUrl = (b, n, ext) => `${b.data}ch${pad(n)}.${ext}`;
@@ -165,7 +167,7 @@ async function fetchJsonFresh(url) {
   }
 }
 async function loadData() {
-  books = (await fetchJsonFresh('books.json')) || LS.get('booksCache', []);
+  books = (await fetchJsonFresh(CATALOG)) || LS.get('booksCache', []);
   LS.set('booksCache', books);
   await Promise.all(books.map(async (b) => {
     b.chapters = (await fetchJsonFresh(b.data + 'index.json')) || [];
