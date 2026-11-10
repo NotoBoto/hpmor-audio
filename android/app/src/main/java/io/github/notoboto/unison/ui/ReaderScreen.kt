@@ -60,6 +60,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -474,7 +476,11 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
     var programmatic by remember { mutableStateOf(false) }
     val viewport = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
     val insetPx = with(LocalDensity.current) { bottomInset.toPx() }
-    val visibleH = (viewport - insetPx).coerceAtLeast(viewport * 0.3f)     // part of the screen not covered by the player
+    val appSet = LocalContext.current.app().store.state.collectAsState().value.settings
+    val follow = appSet.follow; val followBottom = appSet.followBottom; val followTop = appSet.followTop
+    val statusPx = WindowInsets.statusBars.getTop(LocalDensity.current).toFloat()
+    val barPx = with(LocalDensity.current) { 64.dp.toPx() }
+    val fsLinePx = with(LocalDensity.current) { (look.fs * 1.6).sp.toPx() }
     val headerItems = 2   // title + legend
     fun itemOf(pi: Int) = if (pi <= 0) 0 else pi - 1 + headerItems
     // in "read only" mode the screen edges turn pages instead of skipping audio
@@ -486,14 +492,34 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
         t.paras.getOrNull(pi)?.firstOrNull { it.t != null }?.t?.let(onVisible)
     }
     // follow the spoken word
-    LaunchedEffect(activePara, activeTok / 6, readOnly) {
-        if (readOnly || activePara < 0 || System.currentTimeMillis() < userScrollUntil) return@LaunchedEffect
-        val lineTop = layouts[activePara]?.let { lay -> runCatching { lay.getLineTop(lay.getLineForOffset(buildParaStart(t, activePara, activeTok))) }.getOrDefault(0f) } ?: 0f
-        val info = lazy.layoutInfo.visibleItemsInfo.find { it.index == itemOf(activePara) }
-        val wordY = info?.let { it.offset + lineTop }
-        if (wordY != null && wordY > visibleH * 0.18f && wordY < visibleH * 0.75f) return@LaunchedEffect
+    // page-like: while the spoken line is on screen nothing moves; once it gets within two lines of the
+    // bottom (above the player), jump so it sits two lines below the top of the text area
+    LaunchedEffect(activePara, activeTok, readOnly, follow, followBottom, followTop) {
+        if (readOnly || follow == "off" || activePara < 0 || System.currentTimeMillis() < userScrollUntil) return@LaunchedEffect
+        val lay = layouts[activePara]
+        val line = lay?.let { runCatching { it.getLineForOffset(buildParaStart(t, activePara, activeTok)) }.getOrNull() }
+        val lineTop = if (lay != null && line != null) lay.getLineTop(line) else 0f
+        val lineH = if (lay != null && line != null) lay.getLineBottom(line) - lineTop else fsLinePx
+        val margin = followBottom * lineH
+        val li = lazy.layoutInfo
+        val pad = -li.viewportStartOffset.toFloat()                       // list top padding; item offsets start below it
+        val topBound = statusPx + if (immersive) 0f else barPx            // text area: below the top bar...
+        val bottomBound = li.viewportSize.height - insetPx                // ...and above the player
+        val info = li.visibleItemsInfo.find { it.index == itemOf(activePara) }
+        val lineY = info?.let { pad + it.offset + lineTop }                // y of the spoken line in the list's own coordinates
+        if (follow == "center") {
+            // keep the spoken line in the middle of the text area: glide by the difference whenever the line changes
+            val target = (topBound + bottomBound - lineH) / 2
+            if (lineY != null && kotlin.math.abs(lineY - target) < lineH / 2) return@LaunchedEffect
+            programmatic = true
+            if (lineY != null) lazy.animateScrollBy(lineY - target) else lazy.animateScrollToItem(itemOf(activePara), (pad + lineTop - target).toInt())
+            programmatic = false
+            return@LaunchedEffect
+        }
+        // jump once only N readable lines (half-visible counts) are left below
+        if (lineY != null && lineY >= topBound && lineY + lineH <= bottomBound - margin - (if (followBottom > 0) lineH / 2 else 0f)) return@LaunchedEffect
         programmatic = true
-        lazy.animateScrollToItem(itemOf(activePara), (lineTop - visibleH * 0.35f).toInt().coerceAtLeast(-(visibleH * 0.35f).toInt()))
+        lazy.animateScrollToItem(itemOf(activePara), (pad + lineTop - topBound - followTop * lineH).toInt())
         programmatic = false
     }
 

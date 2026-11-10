@@ -244,6 +244,12 @@ fun SettingsScreen(nav: NavController, section: String? = null) {
                 SwitchRow("Не гасить экран", "Пока открыта глава и идёт воспроизведение", s.keepScreenOn) { v -> set { it.copy(keepScreenOn = v) } }
                 PickRow("«Ранее в книге»", s.recapAfterHours, listOf(0 to "Не показывать", 6 to "После перерыва от 6 ч", 12 to "После перерыва от 12 ч",
                     24 to "После перерыва от суток", 72 to "После перерыва от 3 дней")) { v -> set { it.copy(recapAfterHours = v) } }
+                PickRow("Автопрокрутка текста", s.follow, listOf("page" to "Скачками, как страницы", "center" to "Плавно, строка посередине экрана",
+                    "off" to "Выключена")) { v -> set { it.copy(follow = v) } }
+                if (s.follow == "page") {
+                    PickRow("Когда перелистывать", s.followBottom, (0..5).map { it to if (it == 0) "Когда строка дойдёт до плеера" else "За ${lines(it)} до низа" }) { v -> set { it.copy(followBottom = v) } }
+                    PickRow("Отступ сверху после скачка", s.followTop, (0..5).map { it to if (it == 0) "Строка у самого верха" else lines(it).replaceFirstChar { c -> c.uppercase() } + " над ней" }) { v -> set { it.copy(followTop = v) } }
+                }
                 SwitchRow("Подсказки глоссария", "«Кто это?» в меню долгого нажатия на слово", s.glossaryHints) { v -> set { it.copy(glossaryHints = v) } }
                 PickRow("Зоны касания при чтении", s.tapZones, listOf("off" to "Выключены", "single" to "Касание у края — перемотка",
                     "double" to "Двойное касание у края — перемотка")) { v -> set { it.copy(tapZones = v) } }
@@ -370,3 +376,5 @@ fun AboutScreen(nav: NavController) {
         }
     }
 }
+
+private fun lines(n: Int) = "$n " + when { n % 10 == 1 && n % 100 != 11 -> "строку"; n % 10 in 2..4 && n % 100 !in 12..14 -> "строки"; else -> "строк" }

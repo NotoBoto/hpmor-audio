@@ -62,6 +62,9 @@ data class Settings(
     val fontSize: Int = 19,
     val speed: Float = 1f,
     val keepScreenOn: Boolean = true,
+    val follow: String = "page",          // text follows the voice: "page" (jumps), "center" (line kept mid-screen), "off"
+    val followBottom: Int = 2,           // "page": jump when this many lines are left below the spoken one
+    val followTop: Int = 2,              // "page": lines left above the spoken one after the jump
     val fullTitles: Boolean = true,
     val sortDesc: Boolean = true,
     val wifiOnly: Boolean = false,
