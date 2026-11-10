@@ -111,6 +111,21 @@ fun BookScreen(nav: NavController, key: String) {
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
     LaunchedEffect(key) { if (book.chapters.isEmpty() || !app.repo.inLibrary(key)) app.repo.refreshBook(book) }
+    // pull down on the chapter list = refresh only this book (Mihon-like): its description/cover and chapter list
+    var refreshing by remember { mutableStateOf(false) }
+    val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+    fun refreshThis() {
+        if (refreshing) return
+        refreshing = true
+        scope.launch {
+            val before = book.chapters.map { it.n }.toSet()
+            if (book.source.url != io.github.notoboto.unison.data.LOCAL_URL) app.repo.refreshSource(book.source)
+            val r = app.repo.refreshBook(book)
+            refreshing = false
+            val msg = r.fold({ list -> list.count { it.n !in before }.let { k -> if (k > 0) "Новых глав: $k" else "Новых глав нет" } }, { "Не удалось обновить: нет интернета?" })
+            snack.showSnackbar(msg)
+        }
+    }
 
     val s = st.settings
     val prog = st.progress[key].orEmpty()
@@ -266,6 +281,9 @@ fun BookScreen(nav: NavController, key: String) {
         snackbarHost = { SnackbarHost(snack) },
         contentWindowInsets = WindowInsets(0),
     ) { pad ->
+        androidx.compose.material3.pulltorefresh.PullToRefreshBox(refreshing, onRefresh = { refreshThis() }, Modifier.fillMaxSize(), state = pullState,
+            indicator = { androidx.compose.material3.pulltorefresh.PullToRefreshDefaults.Indicator(pullState, refreshing,
+                Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 64.dp)) }) {
         Row(Modifier.fillMaxSize()) {
         if (wide) Column(Modifier.weight(0.42f).fillMaxHeight().verticalScroll(rememberScrollState())) { header() }
         LazyColumn(state = lazy, modifier = Modifier.weight(if (wide) 0.58f else 1f).fillMaxHeight(),
@@ -296,6 +314,7 @@ fun BookScreen(nav: NavController, key: String) {
                     onDelete = { app.downloads.delete(book, listOf(ch.n)) }, onUpdate = { app.downloads.enqueue(book, listOf(ch.n), force = true) })
                 }
             }
+        }
         }
         }
     }

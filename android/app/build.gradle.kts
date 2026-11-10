@@ -30,8 +30,8 @@ android {
         applicationId = "io.github.notoboto.unison"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.1.6"
+        versionCode = 9
+        versionName = "1.1.7"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
