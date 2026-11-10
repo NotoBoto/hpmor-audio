@@ -10,6 +10,8 @@ import io.github.notoboto.unison.data.ChapterImage
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.animateScrollBy
@@ -119,6 +121,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -171,9 +174,13 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
     val np = now?.takeIf { it.book.key == key } ?: now
     var text by remember { mutableStateOf<ChapterText?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(np?.book?.key, np?.n) {
+    var textFor by remember { mutableStateOf("") }
+    val voicedTag = np?.let { st.downloaded[it.book.key]?.get(it.n) }
+    LaunchedEffect(np?.book?.key, np?.n, voicedTag) {
         val cur = np ?: return@LaunchedEffect
-        text = null; error = null
+        if (textFor != "${cur.book.key}:${cur.n}") text = null      // keep the old text while only re-reading the voiced version
+        textFor = "${cur.book.key}:${cur.n}"
+        error = null
         runCatching { app.repo.chapterText(cur.book, cur.n) }.onSuccess { text = it }.onFailure { error = "Глава не скачана, а интернета нет" }
     }
 
@@ -198,7 +205,7 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
     var moreMenu by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     var focusRole by remember(np?.n) { mutableStateOf(-1) }
-    var readOnly by remember { mutableStateOf(false) }
+    var readOnlyPref by remember { mutableStateOf(false) }
     var visibleTime by remember { mutableStateOf<Double?>(null) }
     var wordMenu by remember { mutableStateOf<WordHit?>(null) }
     val look = rememberLook(s)
@@ -228,6 +235,10 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
         pics = load()
         if (pics.isNotEmpty() && app.repo.fillPictures(b, cur.n) > 0) pics = load()
     }
+    val readOnly = readOnlyPref && !playerMode
+    // measured height of the bottom player panel: the text, the "back to current place" chip and auto-scroll keep clear of it
+    var barH by remember { mutableStateOf(0.dp) }
+    val density = LocalDensity.current
 
     Box(Modifier.fillMaxSize().background(if (playerMode) MaterialTheme.colorScheme.background else look.bg)) {
         val t = text
@@ -235,7 +246,7 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
             error != null -> EmptyState("📡", error!!)
             t == null -> EmptyState("⏳", "Загружаю главу…")
             playerMode || t.paras.size <= 1 -> PlayerMode(t, np?.book?.coverUrl, pos, look, zones, onToggleUi = { immersive = !immersive })
-            else -> TextMode(t, pos, look, immersive, zones, focusRole, { focusRole = it }, readOnly, { visibleTime = it },
+            else -> TextMode(t, pos, look, immersive, if (immersive || readOnly) 0.dp else barH, zones, focusRole, { focusRole = it }, readOnly, { visibleTime = it },
                 onTapEmpty = { immersive = !immersive }, onSeek = { player.seekTo(it); player.play() }, onLong = { wordMenu = it },
                 marks = np?.let { st.highlights[it.book.key] }.orEmpty(), pics = pics, onPicture = { bigPic = it })
         }
@@ -252,7 +263,7 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
                 }
             }
         }
-        AnimatedVisibility(!immersive, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
+        AnimatedVisibility(!immersive, enter = slideInVertically { -it } + fadeIn(), exit = slideOutVertically { -it } + fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = .97f)),
                 navigationIcon = { IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") } },
@@ -296,12 +307,16 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
                         DropdownMenu(moreMenu, { moreMenu = false }) {
                             DropdownMenuItem({ Text(if (playerMode) "Режим текста" else "Режим плеера") },
                                 leadingIcon = { Icon(if (playerMode) Icons.AutoMirrored.Outlined.Article else Icons.Filled.Headphones, null) },
-                                onClick = { moreMenu = false; app.store.settings { it.copy(readerMode = if (playerMode) "text" else "player") } })
+                                onClick = {
+                                    moreMenu = false
+                                    if (readOnlyPref) { readOnlyPref = false; visibleTime?.let { player.seekTo(it) } }
+                                    app.store.settings { it.copy(readerMode = if (playerMode) "text" else "player") }
+                                })
                             if (!playerMode) DropdownMenuItem({ Text("Только читать") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.MenuBook, null) },
                                 trailingIcon = { if (readOnly) Icon(Icons.Filled.Check, null) }, onClick = {
                                     moreMenu = false
-                                    if (!readOnly) { player.pause(); readOnly = true }
-                                    else { readOnly = false; visibleTime?.let { player.seekTo(it) } }
+                                    if (!readOnly) { player.pause(); readOnlyPref = true }
+                                    else { readOnlyPref = false; visibleTime?.let { player.seekTo(it) } }
                                 })
                             DropdownMenuItem({ Text("В машине") }, leadingIcon = { Icon(Icons.Filled.DirectionsCar, null) }, onClick = { moreMenu = false; nav.navigate("car") })
                             np?.let { cur -> DropdownMenuItem({ Text("Пересказ прошлой главы") }, leadingIcon = { Icon(Icons.Filled.History, null) }, onClick = {
@@ -322,11 +337,12 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
                 })
         }
 
-        if (readOnly && !immersive) androidx.compose.material3.ExtendedFloatingActionButton(onClick = { readOnly = false; visibleTime?.let { player.seekTo(it) }; player.play() },
+        if (readOnly && !immersive) androidx.compose.material3.ExtendedFloatingActionButton(onClick = { readOnlyPref = false; visibleTime?.let { player.seekTo(it) }; player.play() },
             icon = { Icon(Icons.Filled.PlayArrow, null) }, text = { Text("Слушать отсюда") },
             modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(20.dp))
-        AnimatedVisibility(!immersive && !readOnly, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
-            Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)) {
+        AnimatedVisibility(!immersive && !readOnly, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
+            Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+                modifier = Modifier.onSizeChanged { barH = with(density) { it.height.toDp() } }) {
                 Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 6.dp)) {
                     val dur = np?.duration ?: 1.0
                     var drag by remember { mutableStateOf<Float?>(null) }
@@ -369,6 +385,7 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
     if (readingSheet) ReadingSheet(s, { f -> app.store.settings(f) }) { readingSheet = false }
     if (searchOpen) text?.let { tt -> ChapterSearchDialog(tt, onPick = { time -> searchOpen = false; player.seekTo(time) }) { searchOpen = false } }
     wordMenu?.let { hit -> WordDialog(hit, np?.book?.meta?.title ?: "", np?.book?.coverUrl,
+        onListen = if (readOnly || (text?.paras?.getOrNull(hit.p)?.any { it.t != null } != true)) null else { { player.seekTo(hit.pos); player.play() } },
         glossary = if (s.glossaryHints) lookupGlossary(gloss, hit.word, np?.n ?: 0) else null, onHighlight = { color, whole ->
         np?.let { cur ->
             val h = if (whole) io.github.notoboto.unison.data.Highlight(cur.n, hit.p, 0, hit.lastTok, color, "", hit.paragraph, hit.pos)
@@ -442,7 +459,7 @@ private fun buildPara(toks: List<Tok>, colors: List<Color>, active: Int, look: L
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean, zones: Zones, focusRole: Int, onFocus: (Int) -> Unit,
+private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean, bottomInset: androidx.compose.ui.unit.Dp, zones: Zones, focusRole: Int, onFocus: (Int) -> Unit,
                      readOnly: Boolean, onVisible: (Double) -> Unit, onTapEmpty: () -> Unit, onSeek: (Double) -> Unit,
                      onLong: (WordHit) -> Unit, marks: List<io.github.notoboto.unison.data.Highlight> = emptyList(),
                      pics: Map<Int, List<Pair<String, ChapterImage>>> = emptyMap(), onPicture: (Pair<String, ChapterImage>) -> Unit = {}) {
@@ -456,6 +473,8 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
     var userScrollUntil by remember { mutableLongStateOf(0L) }
     var programmatic by remember { mutableStateOf(false) }
     val viewport = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+    val insetPx = with(LocalDensity.current) { bottomInset.toPx() }
+    val visibleH = (viewport - insetPx).coerceAtLeast(viewport * 0.3f)     // part of the screen not covered by the player
     val headerItems = 2   // title + legend
     fun itemOf(pi: Int) = if (pi <= 0) 0 else pi - 1 + headerItems
     // in "read only" mode the screen edges turn pages instead of skipping audio
@@ -472,15 +491,15 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
         val lineTop = layouts[activePara]?.let { lay -> runCatching { lay.getLineTop(lay.getLineForOffset(buildParaStart(t, activePara, activeTok))) }.getOrDefault(0f) } ?: 0f
         val info = lazy.layoutInfo.visibleItemsInfo.find { it.index == itemOf(activePara) }
         val wordY = info?.let { it.offset + lineTop }
-        if (wordY != null && wordY > viewport * 0.15f && wordY < viewport * 0.62f) return@LaunchedEffect
+        if (wordY != null && wordY > visibleH * 0.18f && wordY < visibleH * 0.75f) return@LaunchedEffect
         programmatic = true
-        lazy.animateScrollToItem(itemOf(activePara), (lineTop - viewport * 0.3f).toInt().coerceAtLeast(-(viewport * 0.3f).toInt()))
+        lazy.animateScrollToItem(itemOf(activePara), (lineTop - visibleH * 0.35f).toInt().coerceAtLeast(-(visibleH * 0.35f).toInt()))
         programmatic = false
     }
 
     val fs = look.fs
     LazyColumn(state = lazy, modifier = Modifier.fillMaxSize().background(look.bg).pointerInput(activeZones) { activeZones.detect(this, onTap = { onTapEmpty() }) },
-        contentPadding = PaddingValues(start = look.margin.dp, end = look.margin.dp, top = if (immersive) 24.dp else 110.dp, bottom = if (readOnly) 80.dp else 260.dp)) {
+        contentPadding = PaddingValues(start = look.margin.dp, end = look.margin.dp, top = 110.dp, bottom = bottomInset + if (readOnly) 96.dp else 48.dp)) {
         item {
             Text(t.title, Modifier.statusBarsPadding(), fontSize = (fs * 1.15).sp, fontWeight = FontWeight.Bold, lineHeight = (fs * 1.45).sp,
                 fontFamily = look.family, color = look.fg)
@@ -513,11 +532,10 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
             Column(Modifier.widthIn(max = 720.dp)) {
             Text(pt.text, Modifier.widthIn(max = 720.dp).padding(bottom = (fs * 0.7).dp)
                 .pointerInput(pt, activeZones) {
-                    activeZones.detect(this, onTap = { off ->
+                    activeZones.detect(this, onTap = { onTapEmpty() }, onDoubleTap = if (readOnly) null else { off ->
                         var k = tokAt(off)
                         while (k >= 0 && toks[k].t == null) k--
-                        val tt = toks.getOrNull(k)?.t
-                        if (tt != null && !readOnly) onSeek(tt) else onTapEmpty()
+                        toks.getOrNull(k)?.t?.let(onSeek)
                     }, onLong = { off ->
                         val k = tokAt(off)
                         if (k >= 0) {
@@ -539,7 +557,7 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
     Box(Modifier.fillMaxSize()) {
         if (!readOnly && System.currentTimeMillis() < userScrollUntil && !immersive) {
             Button(onClick = { userScrollUntil = 0; scope.launch { lazy.animateScrollToItem(itemOf(activePara)) } },
-                Modifier.align(Alignment.BottomCenter).padding(bottom = 210.dp)) { Text("↧ К текущему месту") }
+                Modifier.align(Alignment.BottomCenter).padding(bottom = bottomInset + 12.dp)) { Text("↧ К текущему месту") }
         }
     }
 }
@@ -628,11 +646,15 @@ class Zones(val mode: String, val widthPct: Int, val onSkip: (Int) -> Unit) {
         return if (f < z) -1 else if (f > 1 - z) 1 else 0
     }
     suspend fun detect(scope: PointerInputScope, onTap: (androidx.compose.ui.geometry.Offset) -> Unit,
-                       onLong: ((androidx.compose.ui.geometry.Offset) -> Unit)? = null) = with(scope) {
+                       onLong: ((androidx.compose.ui.geometry.Offset) -> Unit)? = null,
+                       onDoubleTap: ((androidx.compose.ui.geometry.Offset) -> Unit)? = null) = with(scope) {
         when (mode) {
-            "single" -> detectTapGestures(onLongPress = onLong, onTap = { off -> val z = zone(off.x, size.width); if (z != 0) onSkip(z) else onTap(off) })
-            "double" -> detectTapGestures(onLongPress = onLong, onDoubleTap = { off -> val z = zone(off.x, size.width); if (z != 0) onSkip(z) }, onTap = onTap)
-            else -> detectTapGestures(onLongPress = onLong, onTap = onTap)
+            // with a double-tap action, a quick double tap at an edge still means two skips
+            "single" -> detectTapGestures(onLongPress = onLong,
+                onDoubleTap = onDoubleTap?.let { dt -> { off: androidx.compose.ui.geometry.Offset -> val z = zone(off.x, size.width); if (z != 0) { onSkip(z); onSkip(z) } else dt(off) } },
+                onTap = { off -> val z = zone(off.x, size.width); if (z != 0) onSkip(z) else onTap(off) })
+            "double" -> detectTapGestures(onLongPress = onLong, onDoubleTap = { off -> val z = zone(off.x, size.width); if (z != 0) onSkip(z) else onDoubleTap?.invoke(off) }, onTap = onTap)
+            else -> detectTapGestures(onLongPress = onLong, onDoubleTap = onDoubleTap, onTap = onTap)
         }
     }
     override fun equals(other: Any?) = other is Zones && other.mode == mode && other.widthPct == widthPct
@@ -686,7 +708,7 @@ private fun ReadingSheet(s: Settings, set: ((Settings) -> Settings) -> Unit, onC
 
 // ---------------- word actions ----------------
 @Composable
-private fun WordDialog(hit: WordHit, bookTitle: String, cover: String?, glossary: io.github.notoboto.unison.data.GlossaryEntry? = null,
+private fun WordDialog(hit: WordHit, bookTitle: String, cover: String?, onListen: (() -> Unit)?, glossary: io.github.notoboto.unison.data.GlossaryEntry? = null,
                        onHighlight: (String, Boolean) -> Unit, onDismiss: () -> Unit) {
     val word = hit.word; val sentence = hit.sentence
     var whole by remember { mutableStateOf(false) }
@@ -715,7 +737,8 @@ private fun WordDialog(hit: WordHit, bookTitle: String, cover: String?, glossary
             }
             TextButton(onClick = { whole = !whole }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
                 Text(if (whole) "Выделять предложение" else "Выделять весь абзац", fontSize = 13.sp) }
-            listOf<Pair<String, () -> Unit>>(
+            listOfNotNull<Pair<String, () -> Unit>>(
+                onListen?.let { "Слушать с этого предложения" to it },
                 "Копировать предложение" to { clip.setText(AnnotatedString(sentence)); android.widget.Toast.makeText(ctx, "Скопировано", android.widget.Toast.LENGTH_SHORT).show() },
                 "Поделиться цитатой" to {
                     ctx.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")

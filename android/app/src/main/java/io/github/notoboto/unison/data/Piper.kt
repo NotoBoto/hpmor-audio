@@ -56,12 +56,17 @@ object Piper {
         } finally { tmp.delete(); progress.value = progress.value - id }
     }
 
-    fun delete(ctx: Context, id: String) { voiceDir(ctx, id).deleteRecursively(); engines.remove(id)?.release() }
+    @Synchronized fun delete(ctx: Context, id: String) { engines.remove(id)?.release(); voiceDir(ctx, id).deleteRecursively() }
 
+    // All engine access goes through this object's lock: the voice preview and the voicing worker may run at the same time,
+    // and releasing a native engine while another thread is generating with it crashes the whole process.
     private val engines = mutableMapOf<String, OfflineTts>()
-    @Synchronized fun engine(ctx: Context, id: String): OfflineTts = engines.getOrPut(id) {
+    @Synchronized private fun engine(ctx: Context, id: String): OfflineTts = engines.getOrPut(id) {
         val d = voiceDir(ctx, id)
-        val model = d.listFiles()!!.first { it.name.endsWith(".onnx") }
+        // check the files here: a missing file inside the native engine is a hard crash, not an exception
+        val model = d.listFiles()?.firstOrNull { it.name.endsWith(".onnx") } ?: error("голос «$id» не скачан")
+        val tokens = File(d, "tokens.txt"); val espeak = File(d, "espeak-ng-data")
+        if (!tokens.isFile || !espeak.isDirectory) error("файлы голоса «$id» повреждены — удалите и скачайте заново")
         OfflineTts(null, OfflineTtsConfig(model = OfflineTtsModelConfig(
             vits = OfflineTtsVitsModelConfig(model = model.path, tokens = File(d, "tokens.txt").path, dataDir = File(d, "espeak-ng-data").path),
             numThreads = 2, debug = false, provider = "cpu")))
@@ -69,7 +74,8 @@ object Piper {
     @Synchronized fun releaseAll() { engines.values.forEach { it.release() }; engines.clear() }
 
     /** Synthesizes [text] → 16-bit PCM at the model's sample rate. */
-    fun speak(ctx: Context, id: String, text: String, speed: Float): Pair<Int, ShortArray> {
+    @Synchronized fun speak(ctx: Context, id: String, text: String, speed: Float): Pair<Int, ShortArray> {
+        if (text.none { it.isLetterOrDigit() }) return 22050 to ShortArray(0)     // nothing to say (e.g. "—", "***")
         val a = engine(ctx, id).generate(text, 0, speed)
         val pcm = ShortArray(a.samples.size) { i -> (a.samples[i].coerceIn(-1f, 1f) * 32767).toInt().toShort() }
         return a.sampleRate to pcm

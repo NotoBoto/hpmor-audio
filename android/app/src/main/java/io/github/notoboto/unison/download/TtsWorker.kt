@@ -29,7 +29,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.Locale
@@ -58,12 +57,35 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
         tts = TextToSpeech(applicationContext) { status -> if (status == TextToSpeech.SUCCESS) cont.resume(tts!!) else cont.cancel() }
     }
 
-    override suspend fun doWork(): Result {
+    /**
+     * 16-bit mono PCM collected in a temp file. A long chapter is ~100 MB of raw audio: keeping it in a
+     * ByteArrayOutputStream (plus the copy toByteArray makes) froze the whole app in GC for minutes.
+     */
+    private class PcmFile(val file: File) : java.io.Closeable {
+        private val out = java.io.BufferedOutputStream(java.io.FileOutputStream(file), 256 * 1024)
+        var bytes = 0L; private set
+        fun write(b: ByteArray, off: Int = 0, len: Int = b.size) { out.write(b, off, len); bytes += len }
+        fun silence(sec: Double, sr: Int) { var n = (sec * sr).toLong() * 2; val z = ByteArray(8192)
+            while (n > 0) { val k = minOf(n, z.size.toLong()).toInt(); write(z, 0, k); n -= k } }
+        fun seconds(sr: Int) = if (sr <= 0) 0.0 else bytes / 2.0 / sr
+        override fun close() = out.close()
+    }
+
+    private suspend fun progress(p: Float, pi: Int) {
+        setProgress(Data.Builder().putFloat("p", p).build())
+        if (pi % 5 == 0) runCatching { setForeground(foreground(p)) }
+    }
+
+    override suspend fun doWork(): Result = withContext(Dispatchers.Default) { work() }
+
+    private suspend fun work(): Result {
         val key = inputData.getString("key")!!; val id = inputData.getString("id")!!; val n = inputData.getInt("n", 0)
         runCatching { setForeground(foreground(0f)) }
         val s0 = app.store.s.settings
         val usePiper = s0.ttsEngine == "piper" && io.github.notoboto.unison.data.Piper.installed(applicationContext, s0.piperNarrator)
-        val tts = if (usePiper) null else runCatching { initTts() }.getOrElse { return Result.failure() }
+        val tts = if (usePiper) null else runCatching { kotlinx.coroutines.withTimeout(30_000) { withContext(Dispatchers.Main) { initTts() } } }.getOrElse { app.downloads.finished(ok = false); return Result.failure() }
+        val raw = File(applicationContext.cacheDir, "tts_${key}_$n.pcm")
+        val audio = File(applicationContext.cacheDir, "tts_${key}_$n.m4a")
         try {
             val s = app.store.s.settings
             tts?.language = Locale.forLanguageTag(s.ttsLang)
@@ -83,87 +105,101 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
                 k == io.github.notoboto.unison.data.Speakers.Kind.MALE && io.github.notoboto.unison.data.Piper.installed(applicationContext, s.piperMale) -> s.piperMale
                 else -> s.piperNarrator
             }
-            val pcm = ByteArrayOutputStream(); var sr = 0
-            val parasJson = buildJsonArray {
-                var t = 0.0
-                pieces.forEachIndexed { pi, para ->
-                    if (usePiper) {
-                        // Piper: segment by speaker, each with its own voice; timings per segment
-                        val segs = if (pi == 0) listOf(io.github.notoboto.unison.data.Speakers.Seg(para, io.github.notoboto.unison.data.Speakers.Kind.NARRATOR))
-                            else io.github.notoboto.unison.data.Speakers.split(para, speakers)
-                        val toks = mutableListOf<Triple<String, Double, Int>>()
-                        val dialogue = pi > 0 && para.trimStart().let { it.startsWith("—") || it.startsWith("–") || it.startsWith("-") }
-                        for (sg in segs) {
-                            val roleOf = when (sg.kind) { io.github.notoboto.unison.data.Speakers.Kind.NARRATOR -> 0; io.github.notoboto.unison.data.Speakers.Kind.MALE -> 1; else -> 2 }
-                            if (dialogue) toks += Triple("—", t, roleOf)
-                            val (rate, samples) = io.github.notoboto.unison.data.Piper.speak(applicationContext, voiceOf(sg.kind), sg.text, s.ttsRate)
+            // synthesis takes the first 90% of the progress bar, encoding the rest
+            val synthShare = 0.9f
+            var sr = 0
+            val pcm = PcmFile(raw)
+            val parasJson = pcm.use {
+                buildJsonArray {
+                    pieces.forEachIndexed { pi, para ->
+                        if (isStopped) error("stopped")
+                        if (usePiper) {
+                            // Piper: segment by speaker, each with its own voice; timings per segment
+                            val segs = if (pi == 0) listOf(io.github.notoboto.unison.data.Speakers.Seg(para, io.github.notoboto.unison.data.Speakers.Kind.NARRATOR))
+                                else io.github.notoboto.unison.data.Speakers.split(para, speakers)
+                            val toks = mutableListOf<Triple<String, Double, Int>>()
+                            val dialogue = pi > 0 && para.trimStart().let { it.startsWith("—") || it.startsWith("–") || it.startsWith("-") }
+                            for (sg in segs) {
+                                val role = when (sg.kind) { io.github.notoboto.unison.data.Speakers.Kind.NARRATOR -> 0; io.github.notoboto.unison.data.Speakers.Kind.MALE -> 1; else -> 2 }
+                                val t = pcm.seconds(sr)
+                                if (dialogue) toks += Triple("—", t, role)
+                                val (rate, samples) = io.github.notoboto.unison.data.Piper.speak(applicationContext, voiceOf(sg.kind), sg.text, s.ttsRate)
+                                if (samples.isEmpty()) continue
+                                if (sr == 0) sr = rate
+                                val bytes = ByteArray(samples.size * 2)
+                                samples.forEachIndexed { k, v -> bytes[2 * k] = (v.toInt() and 0xff).toByte(); bytes[2 * k + 1] = (v.toInt() shr 8).toByte() }
+                                pcm.write(bytes)
+                                val dur = samples.size.toDouble() / rate
+                                val ws = sg.text.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                val wts = ws.map { (it.count { c -> c.isLetterOrDigit() } + 1).toDouble() }; val tot = wts.sum().coerceAtLeast(1.0)
+                                var acc = 0.0
+                                ws.forEachIndexed { k, w -> toks += Triple(w, t + dur * acc / tot, role); acc += wts[k] }
+                                pcm.silence(0.18, sr)
+                            }
+                            if (sr > 0) pcm.silence(if (pi == 0) 0.8 else 0.3, sr)
+                            add(buildJsonArray { toks.forEach { (w, tt, r) -> add(buildJsonArray { add(JsonPrimitive(w)); add(JsonPrimitive(Math.round(tt * 100) / 100.0)); add(JsonPrimitive(r)) }) } })
+                            progress(synthShare * (pi + 1f) / pieces.size, pi)
+                            return@forEachIndexed
+                        }
+                        val words = para.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                        val paraStart = pcm.seconds(sr); var paraDur = 0.0
+                        for (part in splitLong(para)) {
+                            val f = File(applicationContext.cacheDir, "tts_${key}_$n.wav")
+                            val done = CompletableDeferred<Boolean>(); val uid = "u$pi-${part.hashCode()}"
+                            waiting[uid] = done
+                            if (tts!!.synthesizeToFile(part, null, f, uid) != TextToSpeech.SUCCESS) { waiting.remove(uid); error("synthesis failed") }
+                            // a synthesizer that never calls back must not hang the worker forever
+                            if (kotlinx.coroutines.withTimeoutOrNull(120_000) { done.await() } != true) error("synthesis failed")
+                            val (rate, data) = readWav(f)
+                            f.delete()
+                            if (data.isEmpty()) continue
                             if (sr == 0) sr = rate
-                            val bytes = ByteArray(samples.size * 2)
-                            samples.forEachIndexed { k, v -> bytes[2 * k] = (v.toInt() and 0xff).toByte(); bytes[2 * k + 1] = (v.toInt() shr 8).toByte() }
-                            pcm.write(bytes)
-                            val dur = samples.size.toDouble() / rate
-                            val ws = sg.text.split(Regex("\\s+")).filter { it.isNotEmpty() }
-                            val wts = ws.map { (it.count { c -> c.isLetterOrDigit() } + 1).toDouble() }; val tot = wts.sum().coerceAtLeast(1.0)
-                            var acc = 0.0
-                            val role = when (sg.kind) { io.github.notoboto.unison.data.Speakers.Kind.NARRATOR -> 0; io.github.notoboto.unison.data.Speakers.Kind.MALE -> 1; else -> 2 }
-                            ws.forEachIndexed { k, w -> toks += Triple(w, t + dur * acc / tot, role); acc += wts[k] }
-                            t += dur
-                            val gapS = ByteArray((0.18 * rate).toInt() * 2); pcm.write(gapS); t += 0.18
+                            pcm.write(data); paraDur += data.size / 2.0 / rate
                         }
-                        val gap = ByteArray(((if (pi == 0) 0.8 else 0.3) * sr).toInt() * 2); pcm.write(gap); t += gap.size / 2.0 / sr
-                        add(buildJsonArray { toks.forEach { (w, tt, r) -> add(buildJsonArray { add(JsonPrimitive(w)); add(JsonPrimitive(Math.round(tt * 100) / 100.0)); add(JsonPrimitive(r)) }) } })
-                        setProgress(Data.Builder().putFloat("p", (pi + 1f) / pieces.size).build())
-                        if (pi % 5 == 0) runCatching { setForeground(foreground((pi + 1f) / pieces.size)) }
-                        return@forEachIndexed
+                        if (sr > 0) pcm.silence(if (pi == 0) 0.8 else 0.35, sr)   // pause between paragraphs
+                        // word timings: proportional to word length inside the paragraph
+                        val weights = words.map { (it.count { c -> c.isLetterOrDigit() } + 1).toDouble() }
+                        val total = weights.sum().coerceAtLeast(1.0)
+                        var acc = 0.0
+                        add(buildJsonArray {
+                            words.forEachIndexed { k, w ->
+                                add(buildJsonArray { add(JsonPrimitive(w)); add(JsonPrimitive(Math.round((paraStart + paraDur * acc / total) * 100) / 100.0)); add(JsonPrimitive(0)) })
+                                acc += weights[k]
+                            }
+                        })
+                        progress(synthShare * (pi + 1f) / pieces.size, pi)
                     }
-                    val words = para.split(Regex("\\s+")).filter { it.isNotEmpty() }
-                    var paraStart = t; var paraDur = 0.0
-                    for (part in splitLong(para)) {
-                        val f = File(applicationContext.cacheDir, "tts_${key}_$n.wav")
-                        val done = CompletableDeferred<Boolean>(); val uid = "u$pi-${part.hashCode()}"
-                        waiting[uid] = done
-                        tts!!.synthesizeToFile(part, null, f, uid)
-                        if (!done.await()) error("synthesis failed")
-                        val (rate, data) = readWav(f)
-                        if (sr == 0) sr = rate
-                        pcm.write(data); paraDur += data.size / 2.0 / rate
-                        f.delete()
-                    }
-                    // pause between paragraphs
-                    val gap = ByteArray(((if (pi == 0) 0.8 else 0.35) * sr).toInt() * 2); pcm.write(gap)
-                    // word timings: proportional to word length inside the paragraph
-                    val weights = words.map { (it.count { c -> c.isLetterOrDigit() } + 1).toDouble() }
-                    val total = weights.sum().coerceAtLeast(1.0)
-                    var acc = 0.0
-                    add(buildJsonArray {
-                        words.forEachIndexed { k, w ->
-                            add(buildJsonArray { add(JsonPrimitive(w)); add(JsonPrimitive(Math.round((paraStart + paraDur * acc / total) * 100) / 100.0)); add(JsonPrimitive(0)) })
-                            acc += weights[k]
-                        }
-                    })
-                    t = paraStart + paraDur + gap.size / 2.0 / sr.coerceAtLeast(1)
-                    setProgress(Data.Builder().putFloat("p", (pi + 1f) / pieces.size).build())
-                    if (pi % 5 == 0) runCatching { setForeground(foreground((pi + 1f) / pieces.size)) }
                 }
             }
-            val duration = pcm.size() / 2.0 / sr
-            val audio = File(applicationContext.cacheDir, "tts_${key}_$n.m4a")
-            withContext(Dispatchers.Default) { encodeAac(pcm.toByteArray(), sr, audio) }
+            if (sr == 0) error("synthesizer produced no audio")
+            val duration = pcm.seconds(sr)
+            var lastP = 0L
+            encodeAac(raw, sr, audio) { f ->
+                val now = System.currentTimeMillis()
+                if (now - lastP > 500) { lastP = now; setProgressAsync(Data.Builder().putFloat("p", synthShare + (1 - synthShare) * f).build()) }
+            }
+            raw.delete()
             val chJson = buildJsonObject {
                 put("n", n); put("title", ch.title); put("roles", buildJsonArray { add(JsonPrimitive("Рассказчик")); if (usePiper) { add(JsonPrimitive("Мужской голос")); add(JsonPrimitive("Женский голос")) } })
                 put("paras", parasJson); put("duration", Math.round(duration * 10) / 10.0)
             }
             val files = app.repo.files
-            files.write(key, n, "json") { it.write(json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), chJson).toByteArray()) }
-            files.write(key, n, "ogg") { out -> audio.inputStream().use { it.copyTo(out) } }
-            audio.delete()
-            Local.saveIndex(applicationContext, id, Local.chapters(applicationContext, id).map { if (it.n == n) it.copy(duration = duration, bytes = files.bookBytes(key), v = "tts") else it })
-            withContext(Dispatchers.Main) { app.repo.reloadLocal(); app.store.markDownloaded(key, n, "tts"); app.downloads.finished(ok = true) }
+            withContext(Dispatchers.IO) {
+                files.write(key, n, "json") { it.write(json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), chJson).toByteArray()) }
+                files.write(key, n, "ogg") { out -> audio.inputStream().use { it.copyTo(out) } }
+                audio.delete()
+                Local.saveIndex(applicationContext, id, Local.chapters(applicationContext, id).map { if (it.n == n) it.copy(duration = duration, bytes = files.bookBytes(key), v = "tts") else it })
+                app.repo.reloadLocal()
+            }
+            withContext(Dispatchers.Main) { app.store.markDownloaded(key, n, "tts"); app.downloads.finished(ok = true) }
             return Result.success()
         } catch (e: Exception) {
             if (!isStopped) app.downloads.finished(ok = false)
             return Result.failure()
-        } finally { tts?.shutdown(); if (usePiper) io.github.notoboto.unison.data.Piper.releaseAll() }
+        } finally {
+            tts?.shutdown(); if (usePiper) io.github.notoboto.unison.data.Piper.releaseAll()
+            raw.delete(); audio.delete()
+        }
     }
 
     /** synthesizeToFile has an input limit (~4000 chars): split long paragraphs at sentence ends. */
@@ -194,37 +230,50 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
     }
     private fun downmix(b: ByteArray): ByteArray { val o = ByteArray(b.size / 2); var i = 0; var j = 0; while (i + 3 < b.size) { o[j] = b[i]; o[j + 1] = b[i + 1]; i += 4; j += 2 }; return o }
 
-    /** 16-bit mono PCM → AAC in an MP4 container. */
-    private fun encodeAac(pcm: ByteArray, sr: Int, out: File) {
+    /** 16-bit mono PCM file → AAC in an MP4 container, read in chunks (never the whole chapter in memory). */
+    private fun encodeAac(pcmFile: File, sr: Int, out: File, onProgress: (Float) -> Unit) {
         val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sr, 1).apply {
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
             setInteger(MediaFormat.KEY_BIT_RATE, 48000); setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
         }
+        val total = pcmFile.length().coerceAtLeast(1)
         val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-        codec.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); codec.start()
         val muxer = MediaMuxer(out.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        var track = -1; var off = 0; var inputDone = false; val info = MediaCodec.BufferInfo()
-        while (true) {
-            if (!inputDone) {
-                val ii = codec.dequeueInputBuffer(10_000)
-                if (ii >= 0) {
-                    val buf = codec.getInputBuffer(ii)!!; buf.clear()
-                    val n = minOf(buf.capacity(), pcm.size - off)
-                    val ptsUs = off / 2L * 1_000_000L / sr
-                    if (n <= 0) { codec.queueInputBuffer(ii, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputDone = true }
-                    else { buf.put(pcm, off, n); codec.queueInputBuffer(ii, 0, n, ptsUs, 0); off += n }
+        var started = false
+        try {
+            codec.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); codec.start()
+            java.io.BufferedInputStream(java.io.FileInputStream(pcmFile), 256 * 1024).use { inp ->
+                var track = -1; var off = 0L; var inputDone = false; val info = MediaCodec.BufferInfo()
+                val chunk = ByteArray(16384)
+                while (true) {
+                    if (isStopped) error("stopped")
+                    if (!inputDone) {
+                        val ii = codec.dequeueInputBuffer(10_000)
+                        if (ii >= 0) {
+                            val buf = codec.getInputBuffer(ii)!!; buf.clear()
+                            val want = minOf(buf.capacity(), chunk.size) and 1.inv()     // whole samples only
+                            var got = 0
+                            while (got < want) { val k = inp.read(chunk, got, want - got); if (k < 0) break; got += k }
+                            val ptsUs = off / 2L * 1_000_000L / sr
+                            if (got <= 0) { codec.queueInputBuffer(ii, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputDone = true }
+                            else { buf.put(chunk, 0, got); codec.queueInputBuffer(ii, 0, got, ptsUs, 0); off += got; onProgress(off.toFloat() / total) }
+                        }
+                    }
+                    val oi = codec.dequeueOutputBuffer(info, 10_000)
+                    if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) { track = muxer.addTrack(codec.outputFormat); muxer.start(); started = true }
+                    else if (oi >= 0) {
+                        val ob = codec.getOutputBuffer(oi)!!
+                        if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) info.size = 0
+                        if (info.size > 0 && track >= 0) { ob.position(info.offset); ob.limit(info.offset + info.size); muxer.writeSampleData(track, ob, info) }
+                        codec.releaseOutputBuffer(oi, false)
+                        if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
+                    }
                 }
             }
-            val oi = codec.dequeueOutputBuffer(info, 10_000)
-            if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) { track = muxer.addTrack(codec.outputFormat); muxer.start() }
-            else if (oi >= 0) {
-                val ob = codec.getOutputBuffer(oi)!!
-                if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) info.size = 0
-                if (info.size > 0 && track >= 0) { ob.position(info.offset); ob.limit(info.offset + info.size); muxer.writeSampleData(track, ob, info) }
-                codec.releaseOutputBuffer(oi, false)
-                if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
-            }
+        } finally {
+            runCatching { codec.stop() }; codec.release()
+            if (started) runCatching { muxer.stop() }
+            runCatching { muxer.release() }
         }
-        codec.stop(); codec.release(); muxer.stop(); muxer.release()
     }
 }

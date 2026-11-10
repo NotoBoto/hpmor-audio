@@ -8,3 +8,7 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+
+# sherpa-onnx (Piper voices): the native library reads these config classes and fields by name via JNI.
+# Its AAR ships no consumer rules, so without this R8 renames them and the app crashes on the first synthesis.
+-keep class com.k2fsa.sherpa.onnx.** { *; }

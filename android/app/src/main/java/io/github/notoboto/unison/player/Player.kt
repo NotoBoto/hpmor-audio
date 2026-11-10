@@ -42,7 +42,7 @@ class PlaybackService : MediaLibraryService() {
         val app = application as UnisonApp
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).putExtra("openPlayer", true),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        session = MediaLibrarySession.Builder(this, app.player.exo, AutoLibrary(app)).setSessionActivity(open).build()
+        session = MediaLibrarySession.Builder(this, app.player.sessionPlayer, AutoLibrary(app)).setSessionActivity(open).build()
         app.player.session = session
     }
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
@@ -74,6 +74,8 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
         .build()
     private var controller: MediaController? = null
     var session: MediaSession? = null
+    /** What the notification / lock screen / Android Auto see: the phone player with live subtitles mixed into its metadata. */
+    val sessionPlayer = SubtitlePlayer(exo)
 
     // ---- Google Cast: the session switches between the phone player and the Cast device ----
     private var cast: androidx.media3.cast.CastPlayer? = null
@@ -112,7 +114,7 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
     private fun fromCast(c: androidx.media3.cast.CastPlayer) {
         val pos = c.currentPosition
         casting.value = false
-        session?.player = exo
+        session?.player = sessionPlayer
         if (pos > 0) exo.seekTo(pos)
         isPlaying.value = exo.isPlaying
     }
@@ -162,6 +164,15 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
     init {
         exo.playbackParameters = exo.playbackParameters.withSpeed(speed.value)
         scope.launch { app.store.state.collect { applySound() } }
+        // the open chapter of an imported book was text-only; once its voicing finishes, load the audio right away
+        scope.launch {
+            app.store.state.collect { st ->
+                val np = now.value ?: return@collect
+                if (np.book.source.url != io.github.notoboto.unison.data.LOCAL_URL || exo.mediaItemCount > 0 || casting.value) return@collect
+                if (st.downloaded[np.book.key]?.containsKey(np.n) != true) return@collect
+                open(app.repo.book(np.book.key) ?: np.book, np.n, autoplay = false)
+            }
+        }
         exo.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying.value = playing
@@ -199,18 +210,17 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
 
     /** Live subtitles: the sentence being spoken goes into the notification ("artist" line) and the big widget. */
     private fun updateSubtitle() {
-        val t = curText ?: return
-        val s = io.github.notoboto.unison.ui.sentenceAt(t, position.value)
-        if (s == sentence.value) return
+        val t = curText
+        val s = if (t == null) "" else io.github.notoboto.unison.ui.sentenceAt(t, position.value)
+        val changed = s != sentence.value
         sentence.value = s
+        val line = s.take(160).takeIf { it.isNotBlank() && app.store.s.settings.liveSubtitles && !casting.value }
+        if (line == sessionPlayer.line && !changed) return
+        // throttled so the notification is not rebuilt several times a second; a skipped change is picked up on a later tick
         val now0 = System.currentTimeMillis()
-        if (now0 - lastSubtitleAt < 1200) return
+        if (line != null && now0 - lastSubtitleAt < 1200) return
         lastSubtitleAt = now0
-        if (app.store.s.settings.liveSubtitles && !casting.value && exo.mediaItemCount > 0) {
-            val cur = exo.currentMediaItem ?: return
-            val meta = cur.mediaMetadata.buildUpon().setArtist(s.take(160)).build()
-            runCatching { exo.replaceMediaItem(0, cur.buildUpon().setMediaMetadata(meta).build()) }
-        }
+        sessionPlayer.setLine(line)
         Widgets.update(ctx)
     }
 
@@ -231,7 +241,7 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
                 .setArtworkUri(b.coverUrl?.let(Uri::parse)).setIsPlayable(true).setIsBrowsable(false).build()).build()
         now.value = NowPlaying(b, n, ch.title, ch.duration)
         applyBookSpeed(b.key)
-        curText = null; sentence.value = ""
+        curText = null; sentence.value = ""; sessionPlayer.setLine(null)
         scope.launch { curText = runCatching { app.repo.chapterText(b, n) }.getOrNull() }
         position.value = start
         app.store.opened(b.key, n)
@@ -266,9 +276,9 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
         val p = active
         if (p.mediaItemCount == 0) {
             now.value?.let { np -> if (np.book.source.url == io.github.notoboto.unison.data.LOCAL_URL) {
-                android.widget.Toast.makeText(ctx, "Глава ещё не озвучена: нажмите ⤓ у главы", android.widget.Toast.LENGTH_LONG).show()
-                if (!app.store.isDownloaded(np.book.key, np.n)) return
-                open(np.book, np.n, autoplay = true); return
+                if (!app.store.isDownloaded(np.book.key, np.n)) {
+                    android.widget.Toast.makeText(ctx, "Глава ещё не озвучена: нажмите ⤓ у главы", android.widget.Toast.LENGTH_LONG).show(); return }
+                open(app.repo.book(np.book.key) ?: np.book, np.n, autoplay = true); return
             } }
             return
         }
@@ -291,7 +301,7 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
         saveNow(); active.pause()
         if (!casting.value) { exo.stop(); exo.clearMediaItems() }
         tickJob?.cancel(); cancelSleep()
-        now.value = null; curText = null; sentence.value = ""
+        now.value = null; curText = null; sentence.value = ""; sessionPlayer.setLine(null)
         Widgets.update(ctx)
     }
     fun seekTo(sec: Double) { active.seekTo((sec * 1000).toLong()); position.value = sec }
@@ -401,3 +411,46 @@ class AutoLibrary(private val app: UnisonApp) : MediaLibrarySession.Callback {
 }
 
 private fun PlayerController.noop() = Unit
+
+/**
+ * Live subtitles for the notification, lock screen and car: the sentence being spoken replaces the "artist" line.
+ * The audio files carry their own artist/title tags, which ExoPlayer puts above the media item's metadata, so changing the
+ * item (the old approach) never showed up; here the metadata the session reads is overridden instead.
+ */
+class SubtitlePlayer(player: Player) : androidx.media3.common.ForwardingPlayer(player) {
+    var line: String? = null; private set
+    private val listeners = java.util.concurrent.CopyOnWriteArraySet<Player.Listener>()
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    init {
+        // the wrapped player reports its own (tag) metadata when a file loads: re-announce ours right after it
+        player.addListener(object : Player.Listener {
+            override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) { main.post { announce() } }
+        })
+    }
+
+    override fun addListener(listener: Player.Listener) { super.addListener(listener); listeners += listener }
+    override fun removeListener(listener: Player.Listener) { super.removeListener(listener); listeners -= listener }
+
+    override fun getMediaMetadata(): MediaMetadata {
+        val b = super.getMediaMetadata().buildUpon()
+        // our own title / book / author win over whatever tags the audio file has
+        currentMediaItem?.mediaMetadata?.let { m ->
+            m.title?.let(b::setTitle); m.artist?.let(b::setArtist); m.albumTitle?.let(b::setAlbumTitle); m.artworkUri?.let(b::setArtworkUri)
+        }
+        line?.let { b.setArtist(it).setSubtitle(it) }
+        return b.build()
+    }
+
+    fun setLine(text: String?) {
+        if (text == line) return
+        line = text
+        announce()
+    }
+
+    private fun announce() {
+        val m = mediaMetadata
+        val ev = Player.Events(androidx.media3.common.FlagSet.Builder().add(Player.EVENT_MEDIA_METADATA_CHANGED).build())
+        listeners.forEach { runCatching { it.onMediaMetadataChanged(m); it.onEvents(this, ev) } }
+    }
+}

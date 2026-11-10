@@ -1,6 +1,17 @@
 package io.github.notoboto.unison.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.automirrored.filled.Label
+import androidx.compose.material.icons.filled.BookmarkRemove
+import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.FlipToBack
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.RemoveDone
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -112,7 +123,8 @@ fun BookTile(b: Book, unread: Int, downloaded: Int, inLib: Boolean = false, onCl
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(nav: NavController) {
-    val app = LocalContext.current.app()
+    val ctx = LocalContext.current
+    val app = ctx.app()
     val st by app.store.state.collectAsState()
     val catalogs by app.repo.catalogs.collectAsState()
     val chapters by app.repo.chapters.collectAsState()
@@ -147,11 +159,30 @@ fun LibraryScreen(nav: NavController) {
         if (s.libSortDesc) sorted.reversed() else sorted
     }
     val filtered = s.filterDownloaded || s.filterUnread
-    val open = { b: Book -> nav.navigate("book/${b.key}") }
+    // long press = selection mode (Mihon-like): actions for several books at once
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    val selBooks = all.filter { it.key in selected }
+    var catDialog by remember { mutableStateOf(false) }
+    var removeDialog by remember { mutableStateOf(false) }
+    var dlMenu by remember { mutableStateOf(false) }
+    var selMenu by remember { mutableStateOf(false) }
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    androidx.activity.compose.BackHandler(selected.isNotEmpty()) { selected = emptySet() }
+    fun toggleSel(b: Book) { selected = if (b.key in selected) selected - b.key else selected + b.key }
+    val longPress = { b: Book -> haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); toggleSel(b) }
+    val open = { b: Book -> if (selected.isNotEmpty()) toggleSel(b) else nav.navigate("book/${b.key}") }
     val cont = { b: Book -> continueTarget(b, st)?.let { n -> app.player.open(b, n, autoplay = true); nav.navigate("reader/${b.key}/$n") }; Unit }
 
     Scaffold(topBar = {
-        Column { TopAppBar(title = {
+        Column { if (selected.isNotEmpty()) TopAppBar(
+            navigationIcon = { IconButton(onClick = { selected = emptySet() }) { Icon(Icons.Filled.Close, "Снять выделение") } },
+            title = { Text("${selected.size}") },
+            actions = {
+                IconButton(onClick = { selected = selected + books.map { it.key } }) { Icon(Icons.Filled.SelectAll, "Выбрать все") }
+                IconButton(onClick = { selected = books.map { it.key }.toSet() - selected }) { Icon(Icons.Filled.FlipToBack, "Инвертировать выделение") }
+            },
+            colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh))
+        else TopAppBar(title = {
             if (query == null) Text("Библиотека")
             else androidx.compose.material3.TextField(query!!, { query = it }, placeholder = { Text("Поиск по библиотеке") }, singleLine = true,
                 colors = androidx.compose.material3.TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
@@ -169,20 +200,104 @@ fun LibraryScreen(nav: NavController) {
         if (tabs.size > 1) androidx.compose.material3.PrimaryScrollableTabRow(tabIdx, edgePadding = 8.dp) {
             tabs.forEachIndexed { i, (name, list) -> Tab(i == tabIdx, { catTab = i }, text = { Text("$name (${list.size})") }) }
         } }
+    }, bottomBar = {
+        androidx.compose.animation.AnimatedVisibility(selected.isNotEmpty(),
+            enter = androidx.compose.animation.slideInVertically { it }, exit = androidx.compose.animation.slideOutVertically { it }) {
+            androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    SelAction(Icons.AutoMirrored.Filled.Label, "Категории") { catDialog = true }
+                    SelAction(Icons.Filled.DoneAll, "Прослушано") {
+                        selBooks.forEach { b -> app.store.setDone(b.key, b.chapters.map { it.n }, true) }; selected = emptySet() }
+                    SelAction(Icons.Filled.RemoveDone, "Не прослушано") {
+                        selBooks.forEach { b -> app.store.setDone(b.key, b.chapters.map { it.n }, false) }; selected = emptySet() }
+                    Box(Modifier.weight(1f)) {
+                        Row { SelAction(Icons.Filled.Download, "Скачать") { dlMenu = true } }
+                        androidx.compose.material3.DropdownMenu(dlMenu, { dlMenu = false }) {
+                            fun dl(pick: (Book) -> List<Int>) {
+                                dlMenu = false
+                                val n = selBooks.sumOf { b -> app.downloads.enqueue(b, pick(b)) }
+                                selected = emptySet()
+                                scope.launch { snack.showSnackbar(if (n > 0) "В очереди: ${chapters(n)}" else "Всё уже скачано") }
+                            }
+                            androidx.compose.material3.DropdownMenuItem({ Text("Следующую главу") }, { dl { b -> listOfNotNull(continueTarget(b, st)) } })
+                            androidx.compose.material3.DropdownMenuItem({ Text("Следующие 5 глав") }, { dl { b ->
+                                val from = continueTarget(b, st) ?: 0
+                                b.chapters.filter { it.n >= from && st.progress[b.key]?.get(it.n)?.done != true }.take(5).map { it.n } } })
+                            androidx.compose.material3.DropdownMenuItem({ Text("Непрослушанные") }, { dl { b ->
+                                b.chapters.filter { st.progress[b.key]?.get(it.n)?.done != true }.map { it.n } } })
+                            androidx.compose.material3.DropdownMenuItem({ Text("Все главы") }, { dl { b -> b.chapters.map { it.n } } })
+                        }
+                    }
+                    Box(Modifier.weight(1f)) {
+                        Row { SelAction(Icons.Filled.MoreVert, "Ещё") { selMenu = true } }
+                        androidx.compose.material3.DropdownMenu(selMenu, { selMenu = false }) {
+                            androidx.compose.material3.DropdownMenuItem({ Text("Удалить скачанные главы") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, onClick = {
+                                selMenu = false
+                                selBooks.forEach { b -> app.downloads.delete(b, st.downloaded[b.key].orEmpty().keys) }
+                                selected = emptySet()
+                            })
+                            if (selBooks.size == 1) androidx.compose.material3.DropdownMenuItem({ Text("Поделиться") }, leadingIcon = { Icon(Icons.Filled.Share, null) }, onClick = {
+                                selMenu = false; shareBook(ctx, selBooks.first()); selected = emptySet()
+                            })
+                            androidx.compose.material3.DropdownMenuItem({ Text("Убрать из библиотеки") }, leadingIcon = { Icon(Icons.Filled.BookmarkRemove, null) }, onClick = {
+                                selMenu = false; removeDialog = true
+                            })
+                        }
+                    }
+                }
+            }
+        }
     }, snackbarHost = { SnackbarHost(snack) }) { pad ->
         PullToRefreshBox(refreshing, onRefresh = { scope.launch { app.repo.refreshAll() } }, Modifier.padding(pad).fillMaxSize()) {
             if (books.isEmpty()) EmptyState("📚", when { refreshing -> "Загружаю…"; filtered || q.isNotEmpty() || s.downloadedOnly -> "Ничего не найдено."
                 else -> "Библиотека пуста.\nДобавьте книги во вкладке «Обзор»." })
             else if (s.libDisplay == "list") LazyColumn(Modifier.fillMaxSize()) {
-                items(books, key = { it.key }) { b -> LibItem(b, "list", unread(b), dled(b), s, { open(b) }, { cont(b) }) }
+                items(books, key = { it.key }) { b -> LibItem(b, "list", unread(b), dled(b), s, b.key in selected, { open(b) }, { longPress(b) }, { cont(b) }) }
             }
             else LazyVerticalGrid(if (s.libColumns > 0) GridCells.Fixed(s.libColumns) else GridCells.Adaptive(108.dp), contentPadding = PaddingValues(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(books, key = { it.key }) { b -> LibItem(b, s.libDisplay, unread(b), dled(b), s, { open(b) }, { cont(b) }) }
+                items(books, key = { it.key }) { b -> LibItem(b, s.libDisplay, unread(b), dled(b), s, b.key in selected, { open(b) }, { longPress(b) }, { cont(b) }) }
             }
         }
     }
     if (sheet) LibrarySheet { sheet = false }
+    if (catDialog) BooksCategoriesDialog(selected, onDismiss = { catDialog = false; selected = emptySet() }, onManage = { catDialog = false; nav.navigate("categories") })
+    if (removeDialog) AlertDialog(onDismissRequest = { removeDialog = false },
+        title = { Text("Убрать из библиотеки?") },
+        text = { Text(if (selBooks.size == 1) "«${selBooks.first().meta.title}» пропадёт из библиотеки. Прогресс и скачанные главы сохранятся."
+            else "Книг: ${selBooks.size}. Прогресс и скачанные главы сохранятся.") },
+        confirmButton = { TextButton(onClick = {
+            val keys = selected
+            app.store.update { s2 -> s2.copy(library = s2.library.filter { bookKey(it.sourceUrl, it.bookId) !in keys }) }
+            removeDialog = false; selected = emptySet()
+        }) { Text("Убрать") } },
+        dismissButton = { TextButton(onClick = { removeDialog = false }) { Text("Отмена") } })
+}
+
+/** Categories for several books at once: a box is ticked when every selected book is in that category. */
+@Composable
+private fun BooksCategoriesDialog(keys: Set<String>, onDismiss: () -> Unit, onManage: () -> Unit) {
+    val app = LocalContext.current.app()
+    val st by app.store.state.collectAsState()
+    val initial = remember { st.categories.filter { c -> keys.all { c.id in st.bookCategories[it].orEmpty() } }.map { it.id }.toSet() }
+    var sel by remember { mutableStateOf(initial) }
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (keys.size == 1) "Категории" else "Категории (книг: ${keys.size})") }, text = {
+        if (st.categories.isEmpty()) Text("Категорий пока нет. Создайте их в «Ещё → Категории».")
+        else Column { st.categories.forEach { c ->
+            Row(Modifier.fillMaxWidth().clickable { sel = if (c.id in sel) sel - c.id else sel + c.id }, verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(c.id in sel, { sel = if (c.id in sel) sel - c.id else sel + c.id }); Text(c.name)
+            }
+        } }
+    }, confirmButton = {
+        TextButton(onClick = {
+            // only what the user changed: ticked = add to every book, unticked = remove from every book
+            val added = sel - initial; val removed = initial - sel
+            app.store.update { s -> s.copy(bookCategories = s.bookCategories + keys.associateWith { k ->
+                ((s.bookCategories[k].orEmpty() - removed) + added).distinct() }) }
+            onDismiss()
+        }, enabled = st.categories.isNotEmpty()) { Text("Сохранить") }
+    }, dismissButton = { TextButton(onClick = onManage) { Text("Изменить список") } })
 }
 
 fun continueTarget(b: Book, st: AppState): Int? {
@@ -210,25 +325,30 @@ private fun ContinueButton(modifier: Modifier, onClick: () -> Unit) =
     }
 
 @Composable
-private fun LibItem(b: Book, mode: String, unread: Int, downloaded: Int, s: Settings, onClick: () -> Unit, onContinue: () -> Unit) {
+private fun LibItem(b: Book, mode: String, unread: Int, downloaded: Int, s: Settings, selected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, onContinue: () -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    val selBorder = if (selected) Modifier.border(3.dp, primary, RoundedCornerShape(10.dp)) else Modifier
+    val click = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
     when (mode) {
-        "list" -> Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        "list" -> Row(Modifier.fillMaxWidth().background(if (selected) primary.copy(alpha = .16f) else Color.Transparent).then(click)
+            .padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Cover(b.coverSmUrl, Modifier.size(width = 40.dp, height = 56.dp))
             Spacer(Modifier.size(12.dp))
             Text(b.meta.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 15.sp)
             Badges(unread, downloaded, s)
-            if (s.libContinueButton) { Spacer(Modifier.size(8.dp)); ContinueButton(Modifier, onContinue) }
+            if (s.libContinueButton && !selected) { Spacer(Modifier.size(8.dp)); ContinueButton(Modifier, onContinue) }
         }
-        "comfortable" -> Column(Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick)) {
-            Box(Modifier.aspectRatio(2f / 3f)) {
+        "comfortable" -> Column(Modifier.clip(RoundedCornerShape(10.dp)).background(if (selected) primary.copy(alpha = .16f) else Color.Transparent).then(click)) {
+            Box(Modifier.aspectRatio(2f / 3f).then(selBorder).clip(RoundedCornerShape(10.dp))) {
                 Cover(b.coverSmUrl, Modifier.fillMaxSize())
                 Badges(unread, downloaded, s, Modifier.padding(6.dp))
-                if (s.libContinueButton) ContinueButton(Modifier.align(Alignment.BottomEnd).padding(6.dp), onContinue)
+                if (s.libContinueButton && !selected) ContinueButton(Modifier.align(Alignment.BottomEnd).padding(6.dp), onContinue)
+                if (selected) Box(Modifier.matchParentSize().background(primary.copy(alpha = .22f)))
             }
             Text(b.meta.title, Modifier.padding(horizontal = 4.dp, vertical = 6.dp), fontSize = 13.sp, fontWeight = FontWeight.Medium,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 16.sp)
         }
-        else -> Box(Modifier.aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick)) {
+        else -> Box(Modifier.aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)).then(click).then(selBorder)) {
             Cover(b.coverSmUrl, Modifier.fillMaxSize())
             if (mode == "compact") Box(Modifier.fillMaxWidth().align(Alignment.BottomCenter)
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xD9000000))))
@@ -236,7 +356,8 @@ private fun LibItem(b: Book, mode: String, unread: Int, downloaded: Int, s: Sett
                 Text(b.meta.title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis, lineHeight = 16.sp)
             }
             Badges(unread, downloaded, s, Modifier.padding(6.dp))
-            if (s.libContinueButton) ContinueButton(Modifier.align(Alignment.BottomEnd).padding(6.dp), onContinue)
+            if (s.libContinueButton && !selected) ContinueButton(Modifier.align(Alignment.BottomEnd).padding(6.dp), onContinue)
+            if (selected) Box(Modifier.matchParentSize().background(primary.copy(alpha = .22f)))
         }
     }
 }

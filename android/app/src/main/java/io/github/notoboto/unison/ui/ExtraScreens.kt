@@ -517,6 +517,8 @@ fun VoicesScreen(nav: NavController) {
                                                 .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build())
                                                 .setBufferSizeInBytes(pcm.size * 2).setTransferMode(android.media.AudioTrack.MODE_STATIC).build()
                                             t.write(pcm, 0, pcm.size); t.play()
+                                            kotlinx.coroutines.delay(pcm.size * 1000L / rate + 300)
+                                            t.release()
                                         }.onFailure { snack.showSnackbar("Не удалось: ${it.message}") }
                                         testing = null
                                     }

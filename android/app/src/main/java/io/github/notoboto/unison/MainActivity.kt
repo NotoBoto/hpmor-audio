@@ -11,6 +11,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -118,6 +120,10 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     private var pendingOpenPlayer = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Phones: portrait only (the reader has no landscape layout yet). Tablets (smallest side ≥ 600 dp) rotate freely;
+        // Android 16 ignores orientation locks on large screens anyway.
+        requestedOrientation = if (resources.configuration.smallestScreenWidthDp < 600) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         pendingOpenPlayer = intent?.getBooleanExtra("openPlayer", false) == true
@@ -228,7 +234,10 @@ fun AppRoot(openPlayer: Boolean) {
             }
         },
     ) { pad ->
-        Row(Modifier.padding(bottom = if (topLevel) pad.calculateBottomPadding() else 0.dp)) {
+        // The bottom bar already covers the system navigation bar: mark that inset as consumed, otherwise every tab's own
+        // Scaffold adds it again and its list is cut off above an empty strip.
+        val bottom = if (topLevel) pad.calculateBottomPadding() else 0.dp
+        Row(Modifier.padding(bottom = bottom).consumeWindowInsets(PaddingValues(bottom = bottom))) {
             if (wide && topLevel) androidx.compose.material3.NavigationRail(Modifier.padding(top = 24.dp)) {
                 TABS.forEach { t ->
                     val sel = route == t.route

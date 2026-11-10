@@ -331,7 +331,7 @@ private fun Meta(icon: androidx.compose.ui.graphics.vector.ImageVector, text: St
     }
 
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.SelAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) =
+internal fun androidx.compose.foundation.layout.RowScope.SelAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) =
     // equal share of the bar for every action; long labels ("Не прослушано") wrap instead of squeezing the last one
     Column(Modifier.weight(1f).clip(MaterialTheme.shapes.medium).clickable(onClick = onClick).padding(horizontal = 2.dp, vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
