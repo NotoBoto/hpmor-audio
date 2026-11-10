@@ -33,9 +33,9 @@
     "description": "В старшей школе искусств при университете Суймэй есть строгие общежития, а есть «Сакурасо» — старый дом для проблемных учеников, которого все сторонятся. Здесь живут гениальные чудаки: шумная аниматорша Мисаки, сценарист-ловелас Дзин и программист-затворник Рюноске, общающийся с миром только через Сеть. На их фоне второклассник Сората Канда — обычный парень, угодивший в «психушку» всего лишь из-за любви к брошенным кошкам. Всё меняется, когда в «Сакурасо» поселяется тихая девушка Масиро — гениальная художница, не способная сама даже одеться. Многотомная японская романтическая комедия о дружбе, таланте и поиске своего пути.",
     "credits": "Текст: Хадзимэ Камосида, «Кошечка из Сакурасо» (тома 1–10), перевод с японского: RuRa-team, Cookie\nГолоса: BekBek (свой голос); встроенный голос XTTS-v2 «Annmarie Nele»; участник Mozilla Common Voice (CC0); чтец LibriVox (LibriVox, общественное достояние), «Белая стая. Часть 1-я»; чтец LibriVox (LibriVox, общественное достояние), «Народные русские сказки (Russian Fairy Tales), Выпуск 3»; чтец LibriVox (LibriVox, общественное достояние), «Обрыв»; чтец LibriVox (LibriVox, общественное достояние), «Щелкунчик и мышиный царь».\nОзвучено в Unison Studio (Coqui XTTS-v2)",
     "tags": ["ранобэ", "романтическая комедия", "школа", "Япония", "цикл", "Многоголосая озвучка"],
-    "data": "https://unison-audio.pages.dev/books/koshechka-iz-sakuraso/",
-    "cover": "https://unison-audio.pages.dev/books/koshechka-iz-sakuraso/cover.jpg",
-    "coverSm": "https://unison-audio.pages.dev/books/koshechka-iz-sakuraso/cover-sm.jpg",
+    "data": "https://unison-koshechka-iz-sakuraso.pages.dev/",
+    "cover": "https://unison-koshechka-iz-sakuraso.pages.dev/cover.jpg",
+    "coverSm": "https://unison-koshechka-iz-sakuraso.pages.dev/cover-sm.jpg",
     "total": 75
   }
 ]
