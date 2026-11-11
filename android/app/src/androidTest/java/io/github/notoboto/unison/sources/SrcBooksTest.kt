@@ -9,6 +9,7 @@ import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -41,6 +42,17 @@ class SrcBooksTest {
         val idx = TextBooks.chapters(ctx, pluginSourceUrl(plugin), id)
         assertEquals(listOf(1, 4, 3), idx.map { it.n })
         assertNull(idx.find { it.n == 2 })
+
+        // «Обновления» list chapters by date: a chapter found later has one, the first ones do not
+        assertNull(t["a"]!!.date)
+        assertTrue("new chapter is dated", t["x"]!!.date != null && idx.find { it.n == 4 }!!.date != null)
+
+        // «next chapter» follows reading order, not n (stage 3): after "a" (n 1) comes "x" (n 4), then "c" (n 3)
+        val book = io.github.notoboto.unison.data.Book(io.github.notoboto.unison.data.Source(pluginSourceUrl(plugin), "t"),
+            io.github.notoboto.unison.data.BookMeta(id = id, title = "t"), idx)
+        assertEquals(listOf(4, 3), book.chaptersAfter(1).map { it.n })
+        assertEquals(1, book.chapterBefore(4)!!.n)
+        assertEquals(listOf(4, 3), book.chaptersFrom(4).map { it.n })
     }
 
     @Test fun chapterHashMatchesCore() {

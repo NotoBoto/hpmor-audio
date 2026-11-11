@@ -106,8 +106,13 @@ class Repo(private val context: Context, private val store: Store) {
         list
     }
 
-    suspend fun refreshBook(b: Book): Result<List<ChapterMeta>> = if (isTextSource(b.source.url)) runCatching {
-        if (isPluginSource(b.source.url)) sources.books.refresh(pluginIdOf(b.source.url), b.meta.id)   // chapters() of the plugin
+    /** [pluginMaxAgeMs]: a plugin book checked more recently than this is not asked again (§8.6: at most every 6 h
+     *  in the background); 0 = always (a manual refresh). */
+    suspend fun refreshBook(b: Book, pluginMaxAgeMs: Long = 0): Result<List<ChapterMeta>> = if (isTextSource(b.source.url)) runCatching {
+        if (isPluginSource(b.source.url)) {
+            val checked = sources.books.table(pluginIdOf(b.source.url), b.meta.id)?.checked ?: 0
+            if (System.currentTimeMillis() - checked >= pluginMaxAgeMs) sources.books.refresh(pluginIdOf(b.source.url), b.meta.id)   // chapters()
+        }
         reloadLocal(); TextBooks.chapters(context, b.source.url, b.meta.id)
     } else runCatching {
         val text = get(b.indexUrl)
@@ -118,7 +123,7 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     /** Refresh all sources and every library book. Returns number of failures. */
-    suspend fun refreshAll(): Int = coroutineScope {
+    suspend fun refreshAll(pluginMaxAgeMs: Long = 0): Int = coroutineScope {
         refreshing.value = true
         try {
             // only web sources have a books.json; a stray local:// or src:// entry (old sync imports) is skipped
@@ -127,7 +132,7 @@ class Repo(private val context: Context, private val store: Store) {
                 val first = _catalogs.value[DEFAULT_SOURCE.url].orEmpty()
                 store.update { st -> st.copy(firstRunDone = true, library = st.library + first.filter { m -> st.library.none { it.bookId == m.id } }.map { LibEntry(DEFAULT_SOURCE.url, it.id) }) }
             }
-            val bookFails = libraryBooks().map { async { refreshBook(it).isFailure } }.awaitAll().count { it }
+            val bookFails = libraryBooks().map { async { refreshBook(it, pluginMaxAgeMs).isFailure } }.awaitAll().count { it }
             srcFails + bookFails
         } finally { refreshing.value = false }
     }
@@ -221,6 +226,9 @@ class Repo(private val context: Context, private val store: Store) {
     }
 
     companion object {
+        /** How often plugin books are asked for new chapters outside a manual refresh (§8.6). */
+        const val PLUGIN_CHECK_MS = 6 * 3600_000L
+
         fun parseChapter(text: String): ChapterText {
             val o = json.parseToJsonElement(text).jsonObject
             val roles = o["roles"]!!.jsonArray.map { it.jsonPrimitive.content }

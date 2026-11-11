@@ -105,3 +105,30 @@ class AutoBackupWorker(ctx: Context, p: WorkerParameters) : CoroutineWorker(ctx,
         Result.success()
     }.getOrElse { Result.retry() }
 }
+
+/**
+ * Imports a progress file (sync v2, SOURCES_DESIGN.md §11). Plugin books of the file that are not on this phone are
+ * added in the background through their plugin (when it is installed), then the file is merged again so their
+ * progress lands on the right chapters. [added] is called with the number of books added that way.
+ */
+fun importSyncFile(ctx: Context, text: String, added: (Int) -> Unit = {}): io.github.notoboto.unison.data.Sync.Result {
+    val app = ctx.app()
+    val r = io.github.notoboto.unison.data.Sync.importV2(app.store, text, app.sources.books)
+    if (r.missing.isNotEmpty()) app.scope.launch(Dispatchers.Default) {
+        var n = 0
+        for ((plugin, bookId) in r.missing) {
+            if (plugin !in app.sources.repos.installed()) continue
+            runCatching {
+                val d = app.sources.details(plugin, bookId)
+                val chs = app.sources.chapters(plugin, bookId)
+                app.sources.books.add(plugin, d, chs)
+            }.onSuccess { n++ }
+        }
+        if (n > 0) {
+            app.repo.reloadLocal()
+            io.github.notoboto.unison.data.Sync.importV2(app.store, text, app.sources.books)   // now they are here: merge their progress
+        }
+        kotlinx.coroutines.withContext(Dispatchers.Main) { added(n) }
+    }
+    return r.result
+}

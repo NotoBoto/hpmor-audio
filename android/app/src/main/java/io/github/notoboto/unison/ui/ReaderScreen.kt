@@ -220,7 +220,7 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
         val lastTs = st.history.firstOrNull()?.takeIf { true }?.ts ?: 0L
         val gapH = (System.currentTimeMillis() - (st.history.drop(if (st.history.firstOrNull()?.n == cur.n) 1 else 0).firstOrNull()?.ts ?: lastTs)) / 3_600_000.0
         if (s.recapAfterHours > 0 && gapH >= s.recapAfterHours && app.store.progress(cur.book.key, cur.n).pos < 30) {
-            val prev = cur.book.chapters.lastOrNull { it.n < cur.n } ?: return@LaunchedEffect
+            val prev = cur.book.chapterBefore(cur.n) ?: return@LaunchedEffect
             app.repo.recaps(cur.book).find { it.n == prev.n }?.let { recapText = "${prev.title}\n\n${it.recap}" }
         }
     }
@@ -324,7 +324,7 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
                             np?.let { cur -> DropdownMenuItem({ Text("Пересказ прошлой главы") }, leadingIcon = { Icon(Icons.Filled.History, null) }, onClick = {
                                 moreMenu = false
                                 scope.launch {
-                                    val prev = cur.book.chapters.lastOrNull { it.n < cur.n }
+                                    val prev = cur.book.chapterBefore(cur.n)
                                     recapText = prev?.let { pc -> app.repo.recaps(cur.book).find { it.n == pc.n }?.let { "${pc.title}\n\n${it.recap}" } } ?: "Для этой главы пересказа нет."
                                 }
                             }) }

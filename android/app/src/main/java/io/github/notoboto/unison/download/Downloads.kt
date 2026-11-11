@@ -65,7 +65,8 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
         return if (cur != null && v != cur && v != "1") DlState.Outdated else DlState.Done
     }
 
-    fun enqueue(b: Book, ns: Collection<Int>, force: Boolean = false): Int {
+    /** [background]: automatic voicing ahead — waits for the «charging» / «Wi‑Fi» conditions of the settings. */
+    fun enqueue(b: Book, ns: Collection<Int>, force: Boolean = false, background: Boolean = false): Int {
         var added = 0
         val wifi = app.store.s.settings.wifiOnly
         for (n in ns) {
@@ -75,7 +76,14 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
             if (io.github.notoboto.unison.data.isTextSource(b.source.url)) {     // imported or plugin book: voice it on the phone
                 val tr = OneTimeWorkRequestBuilder<TtsWorker>()
                     .setInputData(workDataOf("key" to b.key, "id" to b.meta.id, "src" to b.source.url, "n" to n, "title" to "${b.shortTitle} — ${ch.title}"))
-                    .addTag(TAG).addTag("k:${b.key}:$n").build()
+                    .addTag(TAG).addTag("k:${b.key}:$n")
+                    .apply {
+                        val s = app.store.s.settings
+                        val plugin = io.github.notoboto.unison.data.isPluginSource(b.source.url)
+                        if (background || plugin) setConstraints(Constraints.Builder()
+                            .setRequiredNetworkType(when { !plugin -> NetworkType.NOT_REQUIRED; background && s.voiceAheadWifi -> NetworkType.UNMETERED; else -> NetworkType.CONNECTED })
+                            .setRequiresCharging(background && s.voiceAheadCharging).build())
+                    }.build()
                 wm.enqueueUniqueWork("tts:${b.key}", ExistingWorkPolicy.APPEND_OR_REPLACE, tr)   // one chapter at a time
                 added++; continue
             }
@@ -104,9 +112,10 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
 
     /** Keep the next N chapters after [n] downloaded. */
     fun autoAhead(b: Book, n: Int) {
-        val k = app.store.s.settings.autoDownloadNext
+        val text = io.github.notoboto.unison.data.isTextSource(b.source.url)
+        val k = if (text) app.store.s.settings.voiceAhead else app.store.s.settings.autoDownloadNext
         if (k <= 0) return
-        enqueue(b, b.chapters.filter { it.n > n }.take(k).map { it.n })
+        enqueue(b, b.chaptersAfter(n).take(k).map { it.n }, background = text)
     }
 
     fun usedBytes(): Long = runCatching { app.repo.files.totalBytes() }.getOrDefault(0L)

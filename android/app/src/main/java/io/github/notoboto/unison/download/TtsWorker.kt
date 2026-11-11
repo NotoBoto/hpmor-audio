@@ -198,6 +198,8 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
                 io.github.notoboto.unison.data.TextBooks.saveIndex(applicationContext, src, id, io.github.notoboto.unison.data.TextBooks.chapters(applicationContext, src, id).map { if (it.n == n) it.copy(duration = duration, bytes = files.bookBytes(key), v = "tts") else it })
                 app.repo.reloadLocal()
             }
+            // voiced again with the current text: drop «текст изменился» (decision 19)
+            if (io.github.notoboto.unison.data.isPluginSource(src)) runCatching { app.sources.books.setChanged(io.github.notoboto.unison.data.pluginIdOf(src), id, n, false); app.repo.reloadLocal() }
             withContext(Dispatchers.Main) { app.store.markDownloaded(key, n, "tts"); app.downloads.finished(ok = true) }
             return Result.success()
         } catch (e: Exception) {

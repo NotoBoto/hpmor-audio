@@ -886,6 +886,11 @@ function pageStats(el) {
 const SITE = () => new URL('./', location.href).href;
 const bkey = (id) => SITE() + '|' + id;
 const splitKey = (k) => { const i = String(k).lastIndexOf('|'); return i < 0 ? null : [k.slice(0, i), k.slice(i + 1)]; };
+// Sync v2 (SOURCES_DESIGN.md §11): fields this site does not know (chapterIds of plugin books, future ones) are kept
+// and written back unchanged, per book and at the top of the file.
+const SYNC_ENTRY_KEYS = new Set(['inLibrary', 'added', 'categories', 'last', 'progress', 'bookmarks', 'listenedMs']);
+const SYNC_TOP_KEYS = new Set(['unison', 'exported', 'device', 'categories', 'books', 'history', 'statsDays']);
+const extraOf = (o, known) => { const x = {}; for (const [k, v] of Object.entries(o || {})) if (!known.has(k)) x[k] = v; return x; };
 const unionNames = (a, b) => { const out = [...(a || [])]; (b || []).forEach((x) => { if (typeof x === 'string' && x.trim() && !out.includes(x)) out.push(x); }); return out; };
 function knownBookIds() {
   const ids = new Set(books.map((b) => b.id));
@@ -896,7 +901,7 @@ function toEntry(id) {
   const s = bs(id), progress = {};
   new Set([...Object.keys(s.pos), ...Object.keys(s.done), ...Object.keys(s.ts)]).forEach((n) => {
     progress[n] = { pos: Math.round((s.pos[n] || 0) * 10) / 10, done: !!s.done[n], ts: s.ts[n] || 0 }; });
-  const e = { inLibrary: true, added: s.added || 0, categories: [...s.cats] };
+  const e = { ...(LS.get('syncExtra', {})[id] || {}), inLibrary: true, added: s.added || 0, categories: [...s.cats] };
   if (s.last != null) e.last = { n: s.last, ts: s.lastTs || 0 };
   return Object.assign(e, { progress, bookmarks: s.bm.map((m) => ({ ...m })), listenedMs: Math.round(s.listenedMs || 0) });
 }
@@ -910,7 +915,7 @@ function fromEntry(id, e) {
 }
 function mergeEntry(a, b, st) {   // a = local, b = file; both in sync-file shape
   a = a || {}; b = b || {};
-  const out = { inLibrary: !!(a.inLibrary || b.inLibrary) };
+  const out = { ...extraOf(a, SYNC_ENTRY_KEYS), ...extraOf(b, SYNC_ENTRY_KEYS), inLibrary: !!(a.inLibrary || b.inLibrary) };
   const ad = [a.added, b.added].map(Number).filter((x) => x > 0); out.added = ad.length ? Math.min(...ad) : 0;
   out.categories = unionNames(a.categories, b.categories);
   const la = a.last, lb = b.last, last = !la ? lb : !lb ? la : (+lb.ts || 0) > (+la.ts || 0) ? lb : la;
@@ -932,20 +937,23 @@ function mergeEntry(a, b, st) {   // a = local, b = file; both in sync-file shap
 function buildSync() {
   statFlush();
   const foreign = LS.get('syncForeign', { books: {}, history: [] });
-  const out = { unison: 1, exported: Date.now(), device: 'Web', categories: getCats(), books: { ...foreign.books }, history: [], statsDays: LS.get('statsDays', {}) };
+  const out = { ...LS.get('syncTop', {}), unison: 1, exported: Date.now(), device: 'Web', categories: getCats(), books: { ...foreign.books }, history: [], statsDays: LS.get('statsDays', {}) };
   knownBookIds().forEach((id) => (out.books[bkey(id)] = toEntry(id)));
   out.history = [...hist.map((h) => ({ book: bkey(h.b), n: h.n, ts: h.ts })), ...foreign.history].sort((x, y) => y.ts - x.ts).slice(0, 300);
   return out;
 }
 function importSync(f) {
-  if (!f || f.unison !== 1 || typeof f.books !== 'object') throw new Error('format');
+  if (!f || !(Number(f.unison) >= 1) || typeof f.books !== 'object') throw new Error('format');   // v1 and v2 (§11)
   const st = { books: 0, progress: 0, bookmarks: 0, history: 0, categories: 0 }, site = SITE();
   const foreign = LS.get('syncForeign', { books: {}, history: [] });
   const cats0 = getCats(); let cats = unionNames(cats0, f.categories);
   for (const [k, e] of Object.entries(f.books || {})) {
     const p = splitKey(k); if (!p || !e) continue;
     st.books++;
-    if (p[0] === site) { fromEntry(p[1], mergeEntry(toEntry(p[1]), e, st)); cats = unionNames(cats, bs(p[1]).cats); }
+    if (p[0] === site) {
+      const m = mergeEntry(toEntry(p[1]), e, st); fromEntry(p[1], m); cats = unionNames(cats, bs(p[1]).cats);
+      const ex = LS.get('syncExtra', {}); ex[p[1]] = extraOf(m, SYNC_ENTRY_KEYS); LS.set('syncExtra', ex);
+    }
     else foreign.books[k] = mergeEntry(foreign.books[k], e, st);
   }
   st.categories = cats.length - cats0.length; saveCats(cats);
@@ -960,7 +968,7 @@ function importSync(f) {
   saveHist();
   const days = LS.get('statsDays', {});
   for (const [d, ms] of Object.entries(f.statsDays || {})) if ((+ms || 0) > (days[d] || 0)) days[d] = +ms;
-  LS.set('statsDays', days); LS.set('syncForeign', foreign);
+  LS.set('statsDays', days); LS.set('syncForeign', foreign); LS.set('syncTop', { ...LS.get('syncTop', {}), ...extraOf(f, SYNC_TOP_KEYS) });
   cur = null;   // force the reader to reopen the chapter with the merged position
   return st;
 }

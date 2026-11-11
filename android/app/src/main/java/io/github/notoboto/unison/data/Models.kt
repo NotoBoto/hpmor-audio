@@ -154,6 +154,11 @@ data class Settings(
     val showNsfw: Boolean = false,       // «Показывать 18+»
     val pluginAutoUpdate: Boolean = true,
     val pluginsChecked: Long = 0,        // last check of plugin repositories for updates
+    // voicing ahead for text books (imported and plugin books), decision 8 and 19
+    val voiceAhead: Int = 2,             // keep N chapters after the current one voiced, 0 = off
+    val voiceAheadCharging: Boolean = false,
+    val voiceAheadWifi: Boolean = false,
+    val revoiceChanged: Boolean = true,  // a not-yet-started chapter whose text changed on the site is voiced again
 )
 
 @Serializable
@@ -191,6 +196,9 @@ data class AppState(
     val statsDays: Map<String, Long> = emptyMap(),                 // yyyy-MM-dd -> ms listened
     val statsBooks: Map<String, Long> = emptyMap(),                // bookKey -> ms listened
     val knownChapters: Map<String, Int> = emptyMap(),              // bookKey -> chapter count seen by the background check
+    /** Parts of sync files this app does not handle, written back unchanged on export (SYNC_FORMAT.md, §11):
+     *  {"top": unknown top-level fields, "books": {key: unknown fields}, "foreign": {key: whole entry}, "history": [...]}. */
+    val syncExtra: kotlinx.serialization.json.JsonObject = kotlinx.serialization.json.JsonObject(emptyMap()),
 )
 
 val DEFAULT_SOURCE = Source("https://notoboto.github.io/unison/", "Unison")
@@ -216,6 +224,15 @@ fun bookKey(sourceUrl: String, id: String): String {
 
 /** A book from a concrete source, with its chapter list (may be empty until loaded). */
 data class Book(val source: Source, val meta: BookMeta, val chapters: List<ChapterMeta> = emptyList()) {
+    // Reading order is the order of [chapters], not n: in plugin books a chapter inserted on the site later gets a
+    // larger n but sits in the middle (SOURCES_DESIGN.md §8.3). For other books both orders are the same.
+    private fun pos(n: Int) = chapters.indexOfFirst { it.n == n }
+    /** Chapters after chapter [n] in reading order. */
+    fun chaptersAfter(n: Int): List<ChapterMeta> = pos(n).let { i -> if (i < 0) chapters.filter { it.n > n } else chapters.drop(i + 1) }
+    /** Chapter [n] and the ones after it. */
+    fun chaptersFrom(n: Int): List<ChapterMeta> = pos(n).let { i -> if (i < 0) chapters.filter { it.n >= n } else chapters.drop(i) }
+    /** The chapter before [n] in reading order. */
+    fun chapterBefore(n: Int): ChapterMeta? = pos(n).let { i -> if (i < 0) chapters.lastOrNull { it.n < n } else chapters.getOrNull(i - 1) }
     val key: String get() = bookKey(source.url, meta.id)
     fun abs(path: String?): String? = path?.let { if (it.contains("://")) it else source.url + it }
     val coverUrl: String? get() = abs(meta.cover)

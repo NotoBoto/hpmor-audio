@@ -40,13 +40,15 @@ class LibraryCheckWorker(ctx: Context, p: WorkerParameters) : CoroutineWorker(ct
     override suspend fun doWork(): Result = withContext(Dispatchers.Main) {
         val app = applicationContext.app()
         val before = app.store.s.knownChapters
-        app.repo.refreshAll()
+        val started = System.currentTimeMillis()
+        app.repo.refreshAll(pluginMaxAgeMs = io.github.notoboto.unison.data.Repo.PLUGIN_CHECK_MS)
         val news = app.repo.libraryBooks().mapNotNull { b ->
             val known = before[b.key] ?: return@mapNotNull null          // first time we see the book: no notification
             val fresh = b.chapters.filter { it.n > known }
             if (fresh.isEmpty()) null else b to fresh
         }
         rememberChapterCounts(app)
+        recheckChangedTexts(app, started)
         if (app.store.s.settings.autoDownloadNew) news.forEach { (b, chs) -> app.downloads.enqueue(b, chs.map { it.n }) }
         if (app.store.s.settings.autoUpdate) app.downloads.updateOutdated(app.repo.libraryBooks())
         if (news.isNotEmpty()) notify(news.map { (b, chs) -> "${b.shortTitle}: ${chs.size} " + if (chs.size == 1) "новая глава" else "новых глав" })
@@ -65,4 +67,27 @@ class LibraryCheckWorker(ctx: Context, p: WorkerParameters) : CoroutineWorker(ct
                 .setContentIntent(open).setAutoCancel(true).build())
         }
     }
+}
+
+/**
+ * Decision 19: chapters of plugin books that were voiced but not started yet are fetched again (≤ 3 per book, only books
+ * checked in this run). A changed text is voiced again, or marked «текст изменился» when that setting is off.
+ */
+private suspend fun recheckChangedTexts(app: UnisonApp, since: Long) {
+    for (b in app.repo.libraryBooks().filter { io.github.notoboto.unison.data.isPluginSource(it.source.url) }) {
+        val pid = io.github.notoboto.unison.data.pluginIdOf(b.source.url)
+        if ((app.sources.books.table(pid, b.meta.id)?.checked ?: 0) < since) continue
+        val candidates = b.chapters.filter { c ->
+            app.store.isDownloaded(b.key, c.n) && app.store.progress(b.key, c.n).let { !it.done && it.pos <= 0.0 }
+        }.take(3)
+        for (c in candidates) {
+            val changed = runCatching { app.sources.books.recheckText(pid, b.meta.id, c.n) }.getOrDefault(false)
+            if (!changed) continue
+            if (app.store.s.settings.revoiceChanged) {
+                app.repo.deleteLocal(b.key, c.n)
+                app.downloads.enqueue(b, listOf(c.n), force = true, background = true)
+            } else app.sources.books.setChanged(pid, b.meta.id, c.n, true)
+        }
+    }
+    app.repo.reloadLocal()
 }

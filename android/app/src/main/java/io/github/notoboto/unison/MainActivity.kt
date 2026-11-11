@@ -191,7 +191,7 @@ fun AppRoot(openPlayer: Boolean) {
     val chapters by app.repo.chapters.collectAsState()
 
     LaunchedEffect(Unit) {
-        app.repo.refreshAll()
+        app.repo.refreshAll(pluginMaxAgeMs = io.github.notoboto.unison.data.Repo.PLUGIN_CHECK_MS)   // app start: plugins at most every 6 h
         if (app.store.s.knownChapters.isEmpty()) rememberChapterCounts(app)
         scheduleLibraryCheck(app)
         app.updater.check()

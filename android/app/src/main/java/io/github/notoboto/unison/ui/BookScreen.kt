@@ -153,7 +153,7 @@ fun BookScreen(nav: NavController, key: String) {
     fun continueTarget(): Int? {
         val last = st.last[key]
         var ch = book.chapters.find { it.n == last }
-        if (ch != null && prog[ch.n]?.done == true) ch = book.chapters.firstOrNull { it.n > ch!!.n } ?: ch
+        if (ch != null && prog[ch.n]?.done == true) ch = book.chaptersAfter(ch!!.n).firstOrNull() ?: ch
         return (ch ?: book.chapters.firstOrNull { prog[it.n]?.done != true } ?: book.chapters.firstOrNull())?.n
     }
     fun toggle(n: Int) { sel = if (n in sel) sel - n else { anchor = n; sel + n } }
@@ -226,7 +226,7 @@ fun BookScreen(nav: NavController, key: String) {
                         IconButton(onClick = { dlMenu = true }) { Icon(Icons.Filled.Download, "Скачать") }
                         DropdownMenu(dlMenu, { dlMenu = false }) {
                             val from = continueTarget() ?: 0
-                            val ahead = book.chapters.filter { it.n >= from && !app.store.isDownloaded(key, it.n) }.map { it.n }
+                            val ahead = book.chaptersFrom(from).filter { !app.store.isDownloaded(key, it.n) }.map { it.n }
                             fun q(ns: List<Int>) { dlMenu = false; val k = app.downloads.enqueue(book, ns); scope.launch { snack.showSnackbar(if (k > 0) "В очереди: ${chapters(k)}" else "Уже скачано") } }
                             if (io.github.notoboto.unison.data.isTextSource(book.source.url)) Text("Озвучить синтезатором:", Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                                 fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

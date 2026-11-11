@@ -162,11 +162,12 @@ fun SettingsScreen(nav: NavController, section: String? = null) {
             .onFailure { scope.launch { snack.showSnackbar("Это не резервная копия Unison") } } }
     }
     val syncOut = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        uri?.let { u -> runCatching { ctx.contentResolver.openOutputStream(u, "wt")!!.use { it.write(io.github.notoboto.unison.data.Sync.export(app.store, app.repo).toByteArray()) } }
+        uri?.let { u -> runCatching { ctx.contentResolver.openOutputStream(u, "wt")!!.use { it.write(io.github.notoboto.unison.data.Sync.export(app.store, app.repo, app.sources.books).toByteArray()) } }
             .onSuccess { scope.launch { snack.showSnackbar("Файл прогресса сохранён") } } }
     }
     val syncIn = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { u -> runCatching { io.github.notoboto.unison.data.Sync.import(app.store, ctx.contentResolver.openInputStream(u)!!.bufferedReader().readText()) }
+        uri?.let { u -> runCatching { io.github.notoboto.unison.importSyncFile(ctx, ctx.contentResolver.openInputStream(u)!!.bufferedReader().readText()) { added ->
+                if (added > 0) scope.launch { snack.showSnackbar("Добавлено книг с сайтов: $added") } } }
             .onSuccess { r -> scope.launch { app.repo.refreshAll(); snack.showSnackbar("Слито: книг ${r.books}, глав обновлено ${r.chapters}, новых закладок ${r.bookmarks}") } }
             .onFailure { scope.launch { snack.showSnackbar("Это не файл прогресса Unison") } } }
     }
@@ -273,6 +274,10 @@ fun SettingsScreen(nav: NavController, section: String? = null) {
                     set { it.copy(storageLimitGb = v) }; app.downloads.enforceLimit() }
                     }
                     "tts" -> {
+                PickRow("Озвучивать вперёд", s.voiceAhead, listOf(0 to "Выключено", 1 to "1 главу", 2 to "2 главы", 3 to "3 главы", 5 to "5 глав")) { v -> set { it.copy(voiceAhead = v) } }
+                SwitchRow("Только на зарядке", "Озвучивать наперёд, только когда телефон заряжается", s.voiceAheadCharging) { v -> set { it.copy(voiceAheadCharging = v) } }
+                SwitchRow("Только по Wi‑Fi", "Главы с сайтов скачиваются для озвучки только по Wi‑Fi", s.voiceAheadWifi) { v -> set { it.copy(voiceAheadWifi = v) } }
+                SwitchRow("Переозвучивать изменённые главы", "Если текст главы на сайте изменился, а вы её ещё не начали", s.revoiceChanged) { v -> set { it.copy(revoiceChanged = v) } }
                 Row1(Icons.Filled.RecordVoiceOver, "Голоса Piper и чтение по ролям", if (s.ttsEngine == "piper") "Включены нейросетевые голоса" else "Сейчас: системный синтезатор") { nav.navigate("voices") }
                 PickRow("Скорость речи", s.ttsRate, listOf(0.7f, 0.85f, 1f, 1.15f, 1.3f, 1.5f).map { it to "${it}×".replace('.', ',') }) { v -> set { it.copy(ttsRate = v) } }
                 PickRow("Высота голоса", s.ttsPitch, listOf(0.8f, 0.9f, 1f, 1.1f, 1.2f).map { it to "${it}".replace('.', ',') }) { v -> set { it.copy(ttsPitch = v) } }

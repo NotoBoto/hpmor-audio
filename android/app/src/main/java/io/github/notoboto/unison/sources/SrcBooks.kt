@@ -23,7 +23,7 @@ import java.security.MessageDigest
  * chapters.json is the chapterId → n table: a chapter keeps its n forever, new chapters get the next free n,
  * reading order is `order` (from chapters()), chapters gone from the site stay with state "removed".
  */
-class SrcBooks(private val context: Context, private val sources: Sources) {
+class SrcBooks(private val context: Context, private val sources: Sources) : io.github.notoboto.unison.data.PluginBookIds {
     private val lock = Mutex()
 
     @Serializable data class Origin(val plugin: String, val book: String, val url: String, val license: String? = null, val lang: String? = null,
@@ -41,7 +41,22 @@ class SrcBooks(private val context: Context, private val sources: Sources) {
 
     data class RefreshResult(val added: List<Int>, val removed: List<Int>)
 
-    fun internalId(pluginBookId: String): String =
+    // ---- sync v2 (§11) ----
+    override fun realBookId(pluginId: String, internalId: String): String? = origin(pluginId, internalId)?.book
+    override fun has(pluginId: String, internalId: String): Boolean = origin(pluginId, internalId) != null
+    override fun chapterIds(pluginId: String, internalId: String): Map<Int, String> =
+        table(pluginId, internalId)?.chapters?.associate { it.n to it.id }.orEmpty()
+    override fun localN(pluginId: String, internalId: String, chapterId: String): Int? = synchronized(this) {
+        val t = table(pluginId, internalId) ?: return null
+        t.chapters.find { it.id == chapterId }?.let { return it.n }
+        // a chapter another device has and this one has not listed yet: keep its progress under a new n
+        val n = (t.chapters.maxOfOrNull { it.n } ?: 0) + 1
+        val e = Entry(chapterId, n, Int.MAX_VALUE, chapterId.substringAfterLast('/'), "", state = "unlisted")
+        TextBooks.atomicWrite(file(pluginId, internalId, "chapters.json"), json.encodeToString(Table.serializer(), t.copy(chapters = t.chapters + e)))
+        n
+    }
+
+    override fun internalId(pluginBookId: String): String =
         "s" + MessageDigest.getInstance("SHA-1").digest(pluginBookId.toByteArray()).joinToString("") { "%02x".format(it) }.take(12)
 
     fun origin(pluginId: String, internalId: String): Origin? = readJson(file(pluginId, internalId, "origin.json"), Origin.serializer())
@@ -97,6 +112,25 @@ class SrcBooks(private val context: Context, private val sources: Sources) {
         return text
     }
 
+    /** Downloads the chapter text again; true when it differs from the text on the phone (decision 19). */
+    suspend fun recheckText(pluginId: String, internalId: String, n: Int): Boolean {
+        val before = table(pluginId, internalId)?.chapters?.find { it.n == n }?.hash ?: return false
+        ensureText(pluginId, internalId, n, refetch = true)
+        val after = table(pluginId, internalId)?.chapters?.find { it.n == n }?.hash
+        return after != null && after != before
+    }
+
+    /** «текст изменился» in the chapter list until the chapter is voiced again. */
+    suspend fun setChanged(pluginId: String, internalId: String, n: Int, changed: Boolean) = lock.withLock {
+        withContext(Dispatchers.IO) {
+            updateEntry(pluginId, internalId, n) { it.copy(textChanged = changed) }
+            val src = pluginSourceUrl(pluginId)
+            TextBooks.saveIndex(context, src, internalId, TextBooks.chapters(context, src, internalId).map {
+                if (it.n != n) it else it.copy(title = it.title.removeSuffix(CHANGED) + if (changed) CHANGED else "")
+            })
+        }
+    }
+
     fun delete(pluginId: String, internalId: String) = TextBooks.delete(context, pluginSourceUrl(pluginId), internalId)
 
     // ---- internals ----
@@ -107,10 +141,13 @@ class SrcBooks(private val context: Context, private val sources: Sources) {
         val byId = old.associateBy { it.id }
         var nextN = (old.maxOfOrNull { it.n } ?: 0) + 1
         val added = mutableListOf<Int>()
+        val firstTime = old.isEmpty()
         val listed = list.mapIndexed { i, c ->
             val prev = byId[c.id]
             val n = prev?.n ?: nextN++.also { added += it }
-            (prev ?: Entry(c.id, n, i, c.title, c.url)).copy(order = i, title = c.title, url = c.url, volume = c.volume, date = c.date,
+            // «Обновления» lists chapters by date: a chapter found later gets the site's date or, without one, the time it was found
+            val date = localDate(c.date) ?: prev?.date ?: if (!firstTime && prev == null) java.time.LocalDateTime.now().withNano(0).toString() else null
+            (prev ?: Entry(c.id, n, i, c.title, c.url)).copy(order = i, title = c.title, url = c.url, volume = c.volume, date = date,
                 locked = c.locked, state = "listed")
         }
         val listedIds = list.map { it.id }.toSet()
@@ -140,9 +177,16 @@ class SrcBooks(private val context: Context, private val sources: Sources) {
     private fun <T> readJson(f: File, s: kotlinx.serialization.KSerializer<T>): T? =
         if (!f.exists()) null else runCatching { json.decodeFromString(s, f.readText()) }.getOrNull()
 
+    /** Plugin dates are ISO 8601 in UTC ("…Z"); the app shows local date-times. */
+    private fun localDate(iso: String?): String? = iso?.let {
+        runCatching { java.time.Instant.parse(it).atZone(java.time.ZoneId.systemDefault()).toLocalDateTime().withNano(0).toString() }.getOrNull()
+    }
+
     private fun licenseTag(l: String?) = when (l) { "public-domain" -> "Общественное достояние"; "cc-by" -> "CC BY"; "cc-by-sa" -> "CC BY-SA"; else -> null }
 
     companion object {
+        const val CHANGED = " • текст изменился"
+
         /** §19.5: first 16 hex of SHA-1 of UTF-8 title + "\n" + paras.join("\n") — the same as core.chapterHash in JS. */
         fun chapterHash(title: String, paras: List<String>): String =
             MessageDigest.getInstance("SHA-1").digest((title + "\n" + paras.joinToString("\n")).toByteArray(Charsets.UTF_8))

@@ -223,7 +223,7 @@ fun LibraryScreen(nav: NavController) {
                             androidx.compose.material3.DropdownMenuItem({ Text("Следующую главу") }, { dl { b -> listOfNotNull(continueTarget(b, st)) } })
                             androidx.compose.material3.DropdownMenuItem({ Text("Следующие 5 глав") }, { dl { b ->
                                 val from = continueTarget(b, st) ?: 0
-                                b.chapters.filter { it.n >= from && st.progress[b.key]?.get(it.n)?.done != true }.take(5).map { it.n } } })
+                                b.chaptersFrom(from).filter { st.progress[b.key]?.get(it.n)?.done != true }.take(5).map { it.n } } })
                             androidx.compose.material3.DropdownMenuItem({ Text("Непрослушанные") }, { dl { b ->
                                 b.chapters.filter { st.progress[b.key]?.get(it.n)?.done != true }.map { it.n } } })
                             androidx.compose.material3.DropdownMenuItem({ Text("Все главы") }, { dl { b -> b.chapters.map { it.n } } })
@@ -303,7 +303,7 @@ private fun BooksCategoriesDialog(keys: Set<String>, onDismiss: () -> Unit, onMa
 fun continueTarget(b: Book, st: AppState): Int? {
     val prog = st.progress[b.key].orEmpty()
     var ch = b.chapters.find { it.n == st.last[b.key] }
-    if (ch != null && prog[ch.n]?.done == true) ch = b.chapters.firstOrNull { it.n > ch!!.n } ?: ch
+    if (ch != null && prog[ch.n]?.done == true) ch = b.chaptersAfter(ch!!.n).firstOrNull() ?: ch
     return (ch ?: b.chapters.firstOrNull { prog[it.n]?.done != true } ?: b.chapters.firstOrNull())?.n
 }
 
