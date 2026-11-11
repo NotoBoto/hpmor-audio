@@ -61,6 +61,7 @@ data class NowPlaying(val book: Book, val n: Int, val title: String, val duratio
 
 /** App-wide player state and commands. Owns the ExoPlayer used by [PlaybackService]. */
 class PlayerController(private val ctx: Context, private val app: UnisonApp, private val scope: CoroutineScope) {
+    private val audioAttrs = AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_SPEECH).build()
     private val streams = StreamStore(java.io.File(ctx.cacheDir, "stream"))
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     val exo: ExoPlayer = ExoPlayer.Builder(ctx)
@@ -68,7 +69,7 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
         // (the audio host ignores Range requests); downloaded chapters play from disk as before
         .setMediaSourceFactory(androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
             PartsDataSource.Factory(WholeFileDataSource.Factory(androidx.media3.datasource.DefaultDataSource.Factory(ctx), streams))))
-        .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_SPEECH).build(), true)
+        .setAudioAttributes(audioAttrs, app.store.s.settings.otherAudio == "pause")
         .setHandleAudioBecomingNoisy(true)
         .setSeekBackIncrementMs(15_000).setSeekForwardIncrementMs(15_000)
         .build()
@@ -138,10 +139,123 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
         val s = app.store.s.settings
         exo.skipSilenceEnabled = s.skipSilence
         runCatching {
-            if (s.voiceBoost > 0) {
+            val gain = s.voiceBoost * 100 + balanceGainMb          // millibels
+            if (gain > 0) {
                 if (enhancer == null) enhancer = android.media.audiofx.LoudnessEnhancer(exo.audioSessionId)
-                enhancer!!.setTargetGain(s.voiceBoost * 100); enhancer!!.enabled = true
+                enhancer!!.setTargetGain(gain); enhancer!!.enabled = true
             } else enhancer?.enabled = false
+        }
+    }
+
+    // ---------- other apps' music (settings: otherAudio, mixBalance) ----------
+    // pause: ExoPlayer takes full audio focus, music apps pause (the Android default for audiobooks)
+    // duck:  we hold "transient, may duck" focus while playing, so the system / the music app turns music down, and back up on pause
+    // mix:   no focus at all, both play; optionally the media volume goes down N steps and the book is boosted back by the same dB,
+    //        so only the music gets quieter. Calls are caught via the audio mode (Android 12+), since without focus nothing tells us.
+    private val am = ctx.getSystemService(android.media.AudioManager::class.java)
+    private val prefs = ctx.getSharedPreferences("other_audio", Context.MODE_PRIVATE)
+    private var appliedMode = app.store.s.settings.otherAudio
+    private var appliedBalance = app.store.s.settings.mixBalance
+    private var focusReq: android.media.AudioFocusRequest? = null
+    private var resumeOnGain = false
+    private var resumeAfterCall = false
+    /** media volume steps taken away for the mix balance; persisted so a killed app still gives them back */
+    private var lowered = prefs.getInt("lowered", 0)
+        set(v) { field = v; prefs.edit().putInt("lowered", v).apply() }
+    private var balanceGainMb = 0
+
+    private val focusListener = android.media.AudioManager.OnAudioFocusChangeListener { f ->
+        when (f) {
+            android.media.AudioManager.AUDIOFOCUS_LOSS -> { resumeOnGain = false; exo.pause(); abandonFocus() }
+            android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> if (exo.isPlaying) { resumeOnGain = true; exo.pause() }
+            android.media.AudioManager.AUDIOFOCUS_GAIN -> if (resumeOnGain) { resumeOnGain = false; exo.play() }
+        }
+    }
+
+    private fun requestFocus(): Boolean {
+        val m = am ?: return true
+        val r = focusReq ?: android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setWillPauseWhenDucked(false).setOnAudioFocusChangeListener(focusListener).build().also { focusReq = it }
+        return m.requestAudioFocus(r) != android.media.AudioManager.AUDIOFOCUS_REQUEST_FAILED
+    }
+    private fun abandonFocus() { resumeOnGain = false; focusReq?.let { am?.abandonAudioFocusRequest(it) } }
+
+    /** our phone playback started / stopped */
+    private fun onOwnPlaying(playing: Boolean) {
+        when (app.store.s.settings.otherAudio) {
+            "duck" -> if (playing) { if (!requestFocus()) exo.pause() } else if (!resumeOnGain) abandonFocus()
+            "mix" -> if (playing) lowerVolume() else restoreVolume()
+        }
+    }
+
+    private fun applyOtherAudio() {
+        val s = app.store.s.settings
+        if (s.otherAudio != appliedMode) {
+            appliedMode = s.otherAudio
+            if (s.otherAudio != "duck") abandonFocus()
+            if (s.otherAudio != "mix") restoreVolume()
+            exo.setAudioAttributes(audioAttrs, s.otherAudio == "pause")
+            if (exo.isPlaying) onOwnPlaying(true)
+        }
+        if (s.mixBalance != appliedBalance) {
+            appliedBalance = s.mixBalance
+            if (lowered > 0 || exo.isPlaying) { restoreVolume(); if (exo.isPlaying && s.otherAudio == "mix") lowerVolume() }
+        }
+    }
+
+    private fun outputDeviceType(): Int {
+        val m = am ?: return android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        if (android.os.Build.VERSION.SDK_INT >= 33)
+            m.getAudioDevicesForAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).build())
+                .firstOrNull()?.let { return it.type }
+        val prefer = listOf(android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_USB_HEADSET)
+        val outs = m.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).map { it.type }
+        return prefer.firstOrNull { it in outs } ?: android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+    }
+
+    private fun lowerVolume() {
+        val m = am ?: return
+        val steps = app.store.s.settings.mixBalance
+        if (lowered > 0 || steps <= 0) return
+        val st = android.media.AudioManager.STREAM_MUSIC
+        val cur = m.getStreamVolume(st)
+        val floor = maxOf(1, if (android.os.Build.VERSION.SDK_INT >= 28) m.getStreamMinVolume(st) else 0)
+        val n = (cur - floor).coerceIn(0, steps)
+        if (n == 0) return
+        var db = Float.NaN
+        if (android.os.Build.VERSION.SDK_INT >= 28) runCatching {
+            val dev = outputDeviceType()
+            db = m.getStreamVolumeDb(st, cur, dev) - m.getStreamVolumeDb(st, cur - n, dev)
+        }
+        if (db.isNaN() || db.isInfinite() || db <= 0f) db = n * 3f            // typical step of a 15-step media volume
+        runCatching { m.setStreamVolume(st, cur - n, 0) }.onFailure { return }
+        lowered = n
+        balanceGainMb = (db.coerceAtMost(20f) * 100).toInt()
+        applySound()
+    }
+
+    private fun restoreVolume() {
+        if (lowered > 0) am?.let { m ->
+            val st = android.media.AudioManager.STREAM_MUSIC
+            runCatching { m.setStreamVolume(st, minOf(m.getStreamVolume(st) + lowered, m.getStreamMaxVolume(st)), 0) }
+        }
+        lowered = 0
+        if (balanceGainMb != 0) { balanceGainMb = 0; applySound() }
+    }
+
+    /** mix mode holds no focus: pause for calls ourselves, continue when the call ends (Android 12+) */
+    private fun watchCalls() {
+        val m = am ?: return
+        if (android.os.Build.VERSION.SDK_INT < 31) return
+        m.addOnModeChangedListener(ctx.mainExecutor) { mode ->
+            if (app.store.s.settings.otherAudio != "mix" || casting.value) return@addOnModeChangedListener
+            val inCall = mode == android.media.AudioManager.MODE_IN_CALL || mode == android.media.AudioManager.MODE_IN_COMMUNICATION ||
+                mode == android.media.AudioManager.MODE_RINGTONE || (android.os.Build.VERSION.SDK_INT >= 33 && mode == android.media.AudioManager.MODE_CALL_SCREENING)
+            if (inCall && exo.isPlaying) { resumeAfterCall = true; exo.pause() }
+            else if (!inCall && mode == android.media.AudioManager.MODE_NORMAL && resumeAfterCall) { resumeAfterCall = false; exo.play() }
         }
     }
 
@@ -163,7 +277,9 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
 
     init {
         exo.playbackParameters = exo.playbackParameters.withSpeed(speed.value)
-        scope.launch { app.store.state.collect { applySound() } }
+        restoreVolume()                    // volume left lowered by a mix session the app did not get to finish
+        watchCalls()
+        scope.launch { app.store.state.collect { applySound(); applyOtherAudio() } }
         // the open chapter of an imported book was text-only; once its voicing finishes, load the audio right away
         scope.launch {
             app.store.state.collect { st ->
@@ -177,6 +293,7 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying.value = playing
                 Widgets.update(ctx)
+                if (!playing || !casting.value) onOwnPlaying(playing)
                 if (casting.value) return
                 if (playing) startTicker() else { saveNow(); position.value = exo.currentPosition / 1000.0; pausedAt = System.currentTimeMillis() }
             }

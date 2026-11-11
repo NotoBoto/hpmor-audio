@@ -28,7 +28,66 @@ object Piper {
     /** id -> download progress (0..1) while downloading */
     val progress = MutableStateFlow<Map<String, Float>>(emptyMap())
 
+    // ---- the native engine (sherpa-onnx + onnxruntime, ~10 MB download) is fetched once, not shipped in the APK ----
+    // Packed by `gradlew :app:piperEngine` and attached to the GitHub release ENGINE_TAG; the sums pin those exact files.
+    const val ENGINE_TAG = "piper-engine-1.13.8"
+    const val ENGINE_KEY = "engine"                  // key in [progress]
+    private val engineSha256 = mapOf(
+        "arm64-v8a" to "8b2f0b6082481748626d12fc7a8adf56a7e1ff5d1417d03db749350f3ba6a79b",
+        "x86_64" to "8625ba8c84c4c56c7b7fe23eeedaedca8d7cb659e23b3207718e5826cf6a2bd7",
+    )
+    private val engineLibs = listOf("libonnxruntime.so", "libsherpa-onnx-jni.so")     // load order: the JNI library needs onnxruntime
+    /** the ABI the app itself runs as (not the CPU's first one: an arm64-only APK on an x86_64 device runs translated as arm64) */
+    private fun abi(ctx: Context): String = when (File(ctx.applicationInfo.nativeLibraryDir ?: "").name) {
+        "arm64" -> "arm64-v8a"; "x86_64" -> "x86_64"
+        else -> android.os.Build.SUPPORTED_ABIS.firstOrNull { it in engineSha256 } ?: "arm64-v8a"
+    }
+    private fun engineDir(ctx: Context) = File(dir(ctx), "$ENGINE_TAG-${abi(ctx)}")
+    fun engineInstalled(ctx: Context) = File(engineDir(ctx), "ok").exists()
+    const val ENGINE_SIZE_MB = 10
+
+    suspend fun downloadEngine(ctx: Context, http: okhttp3.OkHttpClient) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (engineInstalled(ctx)) return@withContext
+        val url = "https://github.com/NotoBoto/unison/releases/download/$ENGINE_TAG/piper-engine-${abi(ctx)}.zip"
+        val tmp = File(dir(ctx), "engine.zip")
+        progress.value = progress.value + (ENGINE_KEY to 0f)
+        try {
+            val sha = java.security.MessageDigest.getInstance("SHA-256")
+            http.newCall(Request.Builder().url(url).build()).execute().use { r ->
+                if (!r.isSuccessful) error("HTTP ${r.code}")
+                val body = r.body!!; val total = body.contentLength().coerceAtLeast(1); var got = 0L
+                tmp.outputStream().use { o -> body.byteStream().use { i ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) { val k = i.read(buf); if (k < 0) break; o.write(buf, 0, k); sha.update(buf, 0, k); got += k
+                        progress.value = progress.value + (ENGINE_KEY to (got.toFloat() / total * 0.9f)) }
+                } }
+            }
+            val hex = sha.digest().joinToString("") { "%02x".format(it) }
+            if (hex != engineSha256[abi(ctx)]) error("файл движка повреждён, попробуйте ещё раз")
+            // older engine versions are not needed any more
+            dir(ctx).listFiles()?.filter { it.isDirectory && it.name.startsWith("piper-engine-") }?.forEach { it.deleteRecursively() }
+            val target = engineDir(ctx).apply { mkdirs() }
+            java.util.zip.ZipInputStream(tmp.inputStream().buffered()).use { z ->
+                while (true) {
+                    val e = z.nextEntry ?: break
+                    if (e.name in engineLibs) File(target, e.name).outputStream().use { z.copyTo(it) }
+                }
+            }
+            if (engineLibs.any { !File(target, it).isFile }) error("в архиве движка нет нужных файлов")
+            File(target, "ok").writeText("1")
+        } finally { tmp.delete(); progress.value = progress.value - ENGINE_KEY }
+    }
+
+    private var engineLoaded = false
+    @Synchronized private fun loadEngine(ctx: Context) {
+        if (engineLoaded) return
+        if (!engineInstalled(ctx)) error("движок Piper не скачан — откройте «Голоса для своих книг»")
+        engineLibs.forEach { System.load(File(engineDir(ctx), it).path) }
+        engineLoaded = true
+    }
+
     suspend fun download(ctx: Context, id: String, http: okhttp3.OkHttpClient) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        downloadEngine(ctx, http)
         val tmp = File(dir(ctx), "$id.tar.bz2")
         progress.value = progress.value + (id to 0f)
         try {
@@ -62,6 +121,7 @@ object Piper {
     // and releasing a native engine while another thread is generating with it crashes the whole process.
     private val engines = mutableMapOf<String, OfflineTts>()
     @Synchronized private fun engine(ctx: Context, id: String): OfflineTts = engines.getOrPut(id) {
+        loadEngine(ctx)
         val d = voiceDir(ctx, id)
         // check the files here: a missing file inside the native engine is a hard crash, not an exception
         val model = d.listFiles()?.firstOrNull { it.name.endsWith(".onnx") } ?: error("голос «$id» не скачан")

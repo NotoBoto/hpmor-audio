@@ -83,6 +83,9 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
         runCatching { setForeground(foreground(0f)) }
         val s0 = app.store.s.settings
         val usePiper = s0.ttsEngine == "piper" && io.github.notoboto.unison.data.Piper.installed(applicationContext, s0.piperNarrator)
+        // the engine is not in the APK: users who had voices before it moved out get it here, once
+        if (usePiper) runCatching { io.github.notoboto.unison.data.Piper.downloadEngine(applicationContext, app.repo.http) }
+            .onFailure { app.downloads.finished(ok = false); return Result.failure() }
         val tts = if (usePiper) null else runCatching { kotlinx.coroutines.withTimeout(30_000) { withContext(Dispatchers.Main) { initTts() } } }.getOrElse { app.downloads.finished(ok = false); return Result.failure() }
         val raw = File(applicationContext.cacheDir, "tts_${key}_$n.pcm")
         val audio = File(applicationContext.cacheDir, "tts_${key}_$n.m4a")

@@ -225,6 +225,10 @@ fun SettingsScreen(nav: NavController, section: String? = null) {
                 PickRow("Перемотка вперёд", s.skipForward, listOf(5, 10, 15, 30, 60).map { it to "$it с" }) { v -> set { it.copy(skipForward = v) } }
                 SwitchRow("Пропускать паузы", "Длинная тишина между фразами сокращается", s.skipSilence) { v -> set { it.copy(skipSilence = v) } }
                 PickRow("Усиление голоса", s.voiceBoost, listOf(0 to "Выключено", 3 to "+3 дБ", 6 to "+6 дБ", 9 to "+9 дБ", 12 to "+12 дБ")) { v -> set { it.copy(voiceBoost = v) } }
+                PickRow("Музыка из других приложений", s.otherAudio, listOf("pause" to "Ставить на паузу", "duck" to "Приглушать, пока звучит книга",
+                    "mix" to "Не трогать — звучит вместе с книгой")) { v -> set { it.copy(otherAudio = v) } }
+                if (s.otherAudio == "mix") PickRow("Музыка тише книги", s.mixBalance, listOf(0 to "Нет, одинаково", 1 to "На 1 деление громкости",
+                    2 to "На 2 деления", 3 to "На 3 деления", 4 to "На 4 деления", 5 to "На 5 делений")) { v -> set { it.copy(mixBalance = v) } }
                 SwitchRow("Старт при подключении наушников", "Проводные, Bluetooth и автомобиль — продолжить с последнего места", s.autoStartHeadphones) { v -> set { it.copy(autoStartHeadphones = v) } }
                 SwitchRow("Живые субтитры", "Звучащая фраза в шторке, на экране блокировки и в большом виджете", s.liveSubtitles) { v -> set { it.copy(liveSubtitles = v) } }
                 SwitchRow("Кнопка трансляции", "Google Cast: колонки и телевизоры в той же сети", s.castButton) { v -> set { it.copy(castButton = v) } }

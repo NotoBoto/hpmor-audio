@@ -494,13 +494,31 @@ fun VoicesScreen(nav: NavController) {
                     if (inst(s.piperNarrator)) set { it.copy(ttsEngine = "piper") } else scope.launch { snack.showSnackbar("Сначала скачайте голос рассказчика") }
                 }
                 SheetTitle("Голоса Piper")
+                // the engine is a separate one-time download; shown when voices are there but the engine is not (e.g. after an update)
+                val ep = prog[io.github.notoboto.unison.data.Piper.ENGINE_KEY]
+                val engineOk = tick >= 0 && io.github.notoboto.unison.data.Piper.engineInstalled(ctx)
+                if (ep != null || (!engineOk && io.github.notoboto.unison.data.Piper.voices.any { inst(it.id) })) ListItem(
+                    headlineContent = { Text("Движок Piper") },
+                    supportingContent = {
+                        if (ep != null) LinearProgressIndicator(progress = { ep }, Modifier.fillMaxWidth().padding(top = 6.dp))
+                        else Text("Нужен для скачанных голосов, ~${io.github.notoboto.unison.data.Piper.ENGINE_SIZE_MB} МБ один раз")
+                    },
+                    trailingContent = {
+                        IconButton(onClick = {
+                            scope.launch {
+                                runCatching { io.github.notoboto.unison.data.Piper.downloadEngine(ctx, app.repo.http) }
+                                    .onSuccess { tick++ }.onFailure { snack.showSnackbar("Не удалось скачать: ${it.message}") }
+                            }
+                        }, enabled = ep == null) { Icon(Icons.Filled.Download, "Скачать") }
+                    })
             }
             items(io.github.notoboto.unison.data.Piper.voices, key = { it.id }) { v ->
                 val p = prog[v.id]
                 ListItem(headlineContent = { Text(v.title + if (v.female) " (женский)" else " (мужской)") },
                     supportingContent = {
                         if (p != null) LinearProgressIndicator(progress = { p }, Modifier.fillMaxWidth().padding(top = 6.dp))
-                        else Text(if (inst(v.id)) "Скачан" else "~21 МБ")
+                        else Text(if (inst(v.id)) "Скачан" else if (io.github.notoboto.unison.data.Piper.engineInstalled(ctx)) "~21 МБ"
+                            else "~21 МБ + движок ~${io.github.notoboto.unison.data.Piper.ENGINE_SIZE_MB} МБ")
                     },
                     trailingContent = {
                         Row {

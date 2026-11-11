@@ -2,6 +2,9 @@ import java.util.Properties
 import java.net.URI
 
 // Offline voice engine (sherpa-onnx with Piper phonemizer). Not stored in git: fetched once from the official release.
+// It is not packed into the APK (~30 MB, unchanged between app versions): `gradlew :app:piperEngine` makes
+// build/piper-engine/piper-engine-<abi>.zip, which go to the GitHub release named in Piper.ENGINE_TAG. After rebuilding
+// them, update the SHA-256 sums in Piper.kt.
 val sherpaAar = file("libs/sherpa-onnx.aar")
 if (!sherpaAar.exists()) {
     sherpaAar.parentFile.mkdirs()
@@ -30,8 +33,8 @@ android {
         applicationId = "io.github.notoboto.unison"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "1.1.9"
+        versionCode = 12
+        versionName = "1.2.0"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -89,7 +92,8 @@ dependencies {
     implementation("androidx.biometric:biometric:1.1.0")
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
-    implementation(files("libs/sherpa-onnx.aar"))          // offline neural voices (Piper)
+    // offline neural voices (Piper): the Kotlin wrapper lives in src (com.k2fsa.sherpa.onnx), the native engine is
+    // downloaded by the app on first use — see the piperEngine task below and data/Piper.kt
     implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.google.guava:guava:33.4.8-android")
@@ -97,3 +101,16 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
 }
+
+// Native Piper engine packages for the app to download: only the two libraries the JNI wrapper needs
+// (libsherpa-onnx-c-api / -cxx-api are separate C/C++ APIs the app never loads).
+val piperEngineZips = listOf("arm64-v8a", "x86_64").map { abi ->
+    tasks.register<Zip>("piperEngine-$abi") {
+        from(zipTree(sherpaAar)) { include("jni/$abi/libonnxruntime.so", "jni/$abi/libsherpa-onnx-jni.so"); eachFile { path = name } }
+        includeEmptyDirs = false
+        isPreserveFileTimestamps = false; isReproducibleFileOrder = true
+        archiveFileName.set("piper-engine-$abi.zip")
+        destinationDirectory.set(layout.buildDirectory.dir("piper-engine"))
+    }
+}
+tasks.register("piperEngine") { group = "unison"; dependsOn(piperEngineZips) }

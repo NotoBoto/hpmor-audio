@@ -140,6 +140,8 @@ data class Settings(
     val skipSilence: Boolean = false,
     val voiceBoost: Int = 0,             // 0 = off, else gain in dB
     val autoStartHeadphones: Boolean = false,
+    val otherAudio: String = "pause",    // other apps' music while a book plays: pause | duck | mix
+    val mixBalance: Int = 0,             // mix: lower media volume this many steps and boost the book back (0 = off)
     val recapAfterHours: Int = 12,       // show «Ранее в книге» after a break this long, 0 = never
     val glossaryHints: Boolean = true,   // «Кто это?» from the glossary
     val storageLimitGb: Int = 0,         // 0 = no limit; otherwise listened chapters are removed first
