@@ -3,4 +3,6 @@
 # and one project per book (https://unison-<id>.pages.dev/). books.json here is a frozen copy for app versions
 # before 1.1.8; it is no longer updated.
 data/
+# …but not the Kotlin package of that name in the Android app
+!android/app/src/*/java/io/github/notoboto/unison/data/
 books/
