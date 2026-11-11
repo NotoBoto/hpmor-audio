@@ -16,6 +16,7 @@ import io.github.notoboto.unison.player.PlayerController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -28,6 +29,8 @@ class UnisonApp : Application() {
     lateinit var downloads: Downloads; private set
     lateinit var player: PlayerController; private set
     lateinit var updater: Updater; private set
+    /** Book-source plugins (SOURCES_DESIGN.md §4–§8): repositories, host and live instances. */
+    val sources by lazy { io.github.notoboto.unison.sources.Sources(this, repo.http) }
 
     override fun onCreate() {
         super.onCreate()
@@ -39,6 +42,15 @@ class UnisonApp : Application() {
         scheduleAutoBackup(this)
         Habits.schedule(this)
         player.watchHeadphones()
+        // built-in plugins from the APK (offline), then a daily background update check (decision 16)
+        scope.launch(Dispatchers.Default) {
+            runCatching { sources.repos.ensureBuiltIns() }
+            val s = store.state.value.settings
+            if (s.pluginAutoUpdate && System.currentTimeMillis() - s.pluginsChecked > 24 * 3600_000L) {
+                runCatching { sources.updateAll() }
+                store.settings { it.copy(pluginsChecked = System.currentTimeMillis()) }
+            }
+        }
     }
 }
 
@@ -48,7 +60,31 @@ fun Context.app() = applicationContext as UnisonApp
 fun backupFileName(): String = "unison_" + SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.US).format(Date()) + ".json"
 
 fun writeBackup(ctx: Context, uri: Uri) {
-    ctx.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(ctx.app().store.exportJson().toByteArray()) }
+    ctx.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(backupJson(ctx).toByteArray()) }
+}
+
+/** App state plus the book-sources section (SOURCES_DESIGN.md §13). */
+fun backupJson(ctx: Context): String {
+    val app = ctx.app()
+    val state = io.github.notoboto.unison.data.json.parseToJsonElement(app.store.exportJson()) as kotlinx.serialization.json.JsonObject
+    val sources = runCatching { io.github.notoboto.unison.sources.SourcesBackup.export(ctx, app.sources) }.getOrNull() ?: return app.store.exportJson()
+    return kotlinx.serialization.json.JsonObject(state + (io.github.notoboto.unison.sources.SourcesBackup.KEY to sources)).toString()
+}
+
+/** Restores a backup: the app state now, the book-sources section in the background. */
+fun restoreBackup(ctx: Context, text: String, done: (problems: List<String>) -> Unit = {}) {
+    val app = ctx.app()
+    app.store.importJson(text)
+    val section = runCatching {
+        (io.github.notoboto.unison.data.json.parseToJsonElement(text) as kotlinx.serialization.json.JsonObject)[io.github.notoboto.unison.sources.SourcesBackup.KEY] as? kotlinx.serialization.json.JsonObject
+    }.getOrNull()
+    app.scope.launch {
+        val problems = if (section == null) emptyList() else kotlinx.coroutines.withContext(Dispatchers.IO) {
+            runCatching { io.github.notoboto.unison.sources.SourcesBackup.restore(ctx, app.sources, section) }.getOrElse { listOf(it.message ?: it.toString()) }
+        }
+        app.repo.reloadLocal()
+        done(problems)
+    }
 }
 
 fun scheduleAutoBackup(ctx: Context) {

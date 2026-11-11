@@ -150,6 +150,10 @@ data class Settings(
     val hideInRecents: Boolean = false,
     // where chapters are stored: null = app storage, else SAF tree uri (e.g. SD card)
     val storageUri: String? = null,
+    // book-source plugins (SOURCES_DESIGN.md §1.1 decisions 15, 16)
+    val showNsfw: Boolean = false,       // «Показывать 18+»
+    val pluginAutoUpdate: Boolean = true,
+    val pluginsChecked: Long = 0,        // last check of plugin repositories for updates
 )
 
 @Serializable

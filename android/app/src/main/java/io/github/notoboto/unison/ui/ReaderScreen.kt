@@ -346,7 +346,7 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
                 modifier = Modifier.onSizeChanged { barH = with(density) { it.height.toDp() } }) {
                 Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 6.dp)) {
-                    val dur = np?.duration ?: 1.0
+                    val dur = (np?.duration ?: 1.0).takeIf { it > 0 } ?: 1.0   // 0 until a plugin chapter's text is known: avoid NaN in the slider
                     var drag by remember { mutableStateOf<Float?>(null) }
                     Slider(value = drag ?: (pos / dur).toFloat().coerceIn(0f, 1f), onValueChange = { drag = it },
                         onValueChangeFinished = { drag?.let { player.seekTo(it * dur) }; drag = null })

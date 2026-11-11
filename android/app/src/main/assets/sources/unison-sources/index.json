@@ -1,0 +1,43 @@
+{
+  "format": 1,
+  "repo": {
+    "id": "unison-sources",
+    "name": "Unison: источники"
+  },
+  "generated": "2026-11-11T10:55:46Z",
+  "plugins": [
+    {
+      "id": "wikisource-ru",
+      "name": "Викитека",
+      "version": "1.0.0",
+      "api": 1,
+      "engine": "qjs-ng-0.12.1",
+      "core": "1.0.0",
+      "lang": "ru",
+      "content": [
+        "text"
+      ],
+      "nsfw": false,
+      "studio": "public",
+      "browser": "never",
+      "site": "https://ru.wikisource.org",
+      "domains": [
+        "ru.wikisource.org"
+      ],
+      "features": [
+        "popular",
+        "search",
+        "byUrl"
+      ],
+      "rateLimit": {
+        "rps": 0.2,
+        "burst": 1
+      },
+      "login": null,
+      "file": "dist/wikisource-ru.js",
+      "icon": "icons/wikisource-ru.png",
+      "sha256": "7b23b38583d51bb12066d89402ab4615a97ae4c6b44cb883c00dba3c3346d97d",
+      "size": 155612
+    }
+  ]
+}

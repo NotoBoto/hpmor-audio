@@ -284,7 +284,7 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
         scope.launch {
             app.store.state.collect { st ->
                 val np = now.value ?: return@collect
-                if (np.book.source.url != io.github.notoboto.unison.data.LOCAL_URL || exo.mediaItemCount > 0 || casting.value) return@collect
+                if (!io.github.notoboto.unison.data.isTextSource(np.book.source.url) || exo.mediaItemCount > 0 || casting.value) return@collect
                 if (st.downloaded[np.book.key]?.containsKey(np.n) != true) return@collect
                 open(app.repo.book(np.book.key) ?: np.book, np.n, autoplay = false)
             }
@@ -370,7 +370,7 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
     /** Load a chapter; continue from saved position unless it was finished. */
     fun open(b: Book, n: Int, autoplay: Boolean) {
         if (now.value?.book?.key == b.key && now.value?.n == n && exo.mediaItemCount > 0) { if (autoplay) play(); return }
-        if (b.source.url == io.github.notoboto.unison.data.LOCAL_URL && !app.store.isDownloaded(b.key, n) && !io.github.notoboto.unison.data.Local.isAudio(ctx, b.meta.id)) {
+        if (io.github.notoboto.unison.data.isTextSource(b.source.url) && !app.store.isDownloaded(b.key, n) && !(b.source.url == io.github.notoboto.unison.data.LOCAL_URL && io.github.notoboto.unison.data.Local.isAudio(ctx, b.meta.id))) {
             resolve(b, n); exo.clearMediaItems(); return       // text only until the chapter is voiced
         }
         val (item, start) = resolve(b, n) ?: return
@@ -392,7 +392,7 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
     fun play() {
         val p = active
         if (p.mediaItemCount == 0) {
-            now.value?.let { np -> if (np.book.source.url == io.github.notoboto.unison.data.LOCAL_URL) {
+            now.value?.let { np -> if (io.github.notoboto.unison.data.isTextSource(np.book.source.url)) {
                 if (!app.store.isDownloaded(np.book.key, np.n)) {
                     android.widget.Toast.makeText(ctx, "Глава ещё не озвучена: нажмите ⤓ у главы", android.widget.Toast.LENGTH_LONG).show(); return }
                 open(app.repo.book(np.book.key) ?: np.book, np.n, autoplay = true); return

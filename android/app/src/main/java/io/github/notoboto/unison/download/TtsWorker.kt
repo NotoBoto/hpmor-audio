@@ -80,6 +80,7 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
 
     private suspend fun work(): Result {
         val key = inputData.getString("key")!!; val id = inputData.getString("id")!!; val n = inputData.getInt("n", 0)
+        val src = inputData.getString("src") ?: io.github.notoboto.unison.data.LOCAL_URL
         runCatching { setForeground(foreground(0f)) }
         val s0 = app.store.s.settings
         val usePiper = s0.ttsEngine == "piper" && io.github.notoboto.unison.data.Piper.installed(applicationContext, s0.piperNarrator)
@@ -99,7 +100,10 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
                 @Deprecated("old api") override fun onError(u: String?) { waiting.remove(u)?.complete(false) }
                 override fun onError(u: String?, code: Int) { waiting.remove(u)?.complete(false) }
             })
-            val ch = Local.chapterParas(applicationContext, id, n)
+            // a plugin chapter: fetch its text through the plugin first (SOURCES_DESIGN.md §8.4)
+            val ch = if (io.github.notoboto.unison.data.isPluginSource(src))
+                app.sources.books.ensureText(io.github.notoboto.unison.data.pluginIdOf(src), id, n)
+            else io.github.notoboto.unison.data.TextBooks.chapterParas(applicationContext, src, id, n)
             val pieces = listOf(ch.title) + ch.paras
             val speakers = io.github.notoboto.unison.data.Speakers.State()
             fun voiceOf(k: io.github.notoboto.unison.data.Speakers.Kind) = when {
@@ -191,7 +195,7 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
                 files.write(key, n, "json") { it.write(json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), chJson).toByteArray()) }
                 files.write(key, n, "ogg") { out -> audio.inputStream().use { it.copyTo(out) } }
                 audio.delete()
-                Local.saveIndex(applicationContext, id, Local.chapters(applicationContext, id).map { if (it.n == n) it.copy(duration = duration, bytes = files.bookBytes(key), v = "tts") else it })
+                io.github.notoboto.unison.data.TextBooks.saveIndex(applicationContext, src, id, io.github.notoboto.unison.data.TextBooks.chapters(applicationContext, src, id).map { if (it.n == n) it.copy(duration = duration, bytes = files.bookBytes(key), v = "tts") else it })
                 app.repo.reloadLocal()
             }
             withContext(Dispatchers.Main) { app.store.markDownloaded(key, n, "tts"); app.downloads.finished(ok = true) }

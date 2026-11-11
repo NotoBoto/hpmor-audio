@@ -1,5 +1,6 @@
 import java.util.Properties
 import java.net.URI
+import java.security.MessageDigest
 
 // Offline voice engine (sherpa-onnx with Piper phonemizer). Not stored in git: fetched once from the official release.
 // It is not packed into the APK (~30 MB, unchanged between app versions): `gradlew :app:piperEngine` makes
@@ -12,9 +13,16 @@ if (!sherpaAar.exists()) {
         .openStream().use { i: java.io.InputStream -> sherpaAar.outputStream().use { o -> i.copyTo(o) } }
 }
 
+// Book-source plugin engine (see dependencies): verify the checked-in AAR before using it.
+val quickjsAar = file("libs/quickjs-kt-ng-1.0.18-ng.1.aar")
+run {
+    val expected = file("${quickjsAar.path}.sha256").readText().trim().substringBefore(' ').trimStart('*')
+    val actual = MessageDigest.getInstance("SHA-256").digest(quickjsAar.readBytes()).joinToString("") { b -> "%02x".format(b) }
+    check(actual == expected) { "${quickjsAar.name}: sha256 $actual does not match ${quickjsAar.name}.sha256" }
+}
+
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
@@ -27,7 +35,7 @@ val signProps = Properties().apply {
 
 android {
     namespace = "io.github.notoboto.unison"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "io.github.notoboto.unison"
@@ -36,6 +44,7 @@ android {
         versionCode = 12
         versionName = "1.2.0"
         ndk { abiFilters += listOf("arm64-v8a") }
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -59,12 +68,15 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
     buildFeatures {
         compose = true
         buildConfig = true
     }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+}
+
+kotlin {
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
 dependencies {
@@ -95,11 +107,21 @@ dependencies {
     // offline neural voices (Piper): the Kotlin wrapper lives in src (com.k2fsa.sherpa.onnx), the native engine is
     // downloaded by the app on first use — see the piperEngine task below and data/Piper.kt
     implementation("org.apache.commons:commons-compress:1.27.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")   // 1.11: what quickjs-kt is built against
     implementation("com.google.guava:guava:33.4.8-android")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // JS engine for book-source plugins: quickjs-kt on quickjs-ng 0.12.1 (fork NotoBoto/quickjs-kt-ng, SOURCES_DESIGN.md §4).
+    // The AAR is kept in git next to its .sha256; the build refuses an AAR that does not match.
+    implementation(files(quickjsAar))
+    // ed25519 for signed plugin repository indexes (§6): Android has it only from API 33. Lightweight API only, shrunk by R8.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.87")
+
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("org.jetbrains.kotlin:kotlin-test-junit")
 }
 
 // Native Piper engine packages for the app to download: only the two libraries the JNI wrapper needs

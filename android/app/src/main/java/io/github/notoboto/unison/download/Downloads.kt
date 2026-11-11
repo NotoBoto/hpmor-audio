@@ -72,9 +72,9 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
             val st = state(b, n)
             if (!force && (st == DlState.Done || st is DlState.Running || st == DlState.Queued)) continue
             val ch = b.chapters.find { it.n == n } ?: continue
-            if (b.source.url == io.github.notoboto.unison.data.LOCAL_URL) {     // imported book: voice it on the phone
+            if (io.github.notoboto.unison.data.isTextSource(b.source.url)) {     // imported or plugin book: voice it on the phone
                 val tr = OneTimeWorkRequestBuilder<TtsWorker>()
-                    .setInputData(workDataOf("key" to b.key, "id" to b.meta.id, "n" to n, "title" to "${b.shortTitle} — ${ch.title}"))
+                    .setInputData(workDataOf("key" to b.key, "id" to b.meta.id, "src" to b.source.url, "n" to n, "title" to "${b.shortTitle} — ${ch.title}"))
                     .addTag(TAG).addTag("k:${b.key}:$n").build()
                 wm.enqueueUniqueWork("tts:${b.key}", ExistingWorkPolicy.APPEND_OR_REPLACE, tr)   // one chapter at a time
                 added++; continue

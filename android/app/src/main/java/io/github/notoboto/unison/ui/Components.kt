@@ -76,7 +76,8 @@ fun dayLabel(d: LocalDate): String {
 fun parseDate(s: String?): LocalDateTime? = s?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
 fun hhmm(t: LocalDateTime) = t.format(DateTimeFormatter.ofPattern("HH:mm"))
 
-fun progressOf(p: Progress, ch: ChapterMeta) = if (p.done) 1f else (p.pos / ch.duration).toFloat().coerceIn(0f, 1f)
+// duration is 0 for a chapter whose text is not on the phone yet (plugin books): no division by zero → NaN
+fun progressOf(p: Progress, ch: ChapterMeta) = if (p.done) 1f else if (ch.duration <= 0) 0f else (p.pos / ch.duration).toFloat().coerceIn(0f, 1f)
 fun subline(p: Progress, ch: ChapterMeta): String {
     val f = progressOf(p, ch)
     return fmt(ch.duration) + when {

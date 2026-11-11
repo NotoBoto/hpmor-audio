@@ -119,7 +119,7 @@ fun BookScreen(nav: NavController, key: String) {
         refreshing = true
         scope.launch {
             val before = book.chapters.map { it.n }.toSet()
-            if (book.source.url != io.github.notoboto.unison.data.LOCAL_URL) app.repo.refreshSource(book.source)
+            if (!io.github.notoboto.unison.data.isTextSource(book.source.url)) app.repo.refreshSource(book.source)
             val r = app.repo.refreshBook(book)
             refreshing = false
             val msg = r.fold({ list -> list.count { it.n !in before }.let { k -> if (k > 0) "Новых глав: $k" else "Новых глав нет" } }, { "Не удалось обновить: нет интернета?" })
@@ -180,7 +180,7 @@ fun BookScreen(nav: NavController, key: String) {
                         book.meta.author?.let { Meta(Icons.Outlined.Person, it) }
                         book.meta.translator?.let { Meta(Icons.Outlined.Translate, it) }
                         val total = book.chapters.sumOf { it.duration }
-                        Meta(Icons.Outlined.Schedule, if (book.source.url == io.github.notoboto.unison.data.LOCAL_URL) "${chapters(book.chapters.size)} • озвучено ${st.downloaded[key].orEmpty().size}" else "${hours(total)} • озвучено ${book.chapters.size}" + (book.meta.total?.let { " из $it" } ?: ""))
+                        Meta(Icons.Outlined.Schedule, if (io.github.notoboto.unison.data.isTextSource(book.source.url)) "${chapters(book.chapters.size)} • озвучено ${st.downloaded[key].orEmpty().size}" else "${hours(total)} • озвучено ${book.chapters.size}" + (book.meta.total?.let { " из $it" } ?: ""))
                     }
                 }
             }
@@ -228,7 +228,7 @@ fun BookScreen(nav: NavController, key: String) {
                             val from = continueTarget() ?: 0
                             val ahead = book.chapters.filter { it.n >= from && !app.store.isDownloaded(key, it.n) }.map { it.n }
                             fun q(ns: List<Int>) { dlMenu = false; val k = app.downloads.enqueue(book, ns); scope.launch { snack.showSnackbar(if (k > 0) "В очереди: ${chapters(k)}" else "Уже скачано") } }
-                            if (book.source.url == io.github.notoboto.unison.data.LOCAL_URL) Text("Озвучить синтезатором:", Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            if (io.github.notoboto.unison.data.isTextSource(book.source.url)) Text("Озвучить синтезатором:", Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                                 fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             DropdownMenuItem({ Text("Следующую главу") }, { q(ahead.take(1)) })
                             DropdownMenuItem({ Text("Следующие 5") }, { q(ahead.take(5)) })

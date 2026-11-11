@@ -154,7 +154,10 @@ fun SettingsScreen(nav: NavController, section: String? = null) {
         uri?.let { runCatching { writeBackup(ctx, it) }.onSuccess { scope.launch { snack.showSnackbar("Резервная копия сохранена") } } }
     }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { u -> runCatching { app.store.importJson(ctx.contentResolver.openInputStream(u)!!.bufferedReader().readText()) }
+        uri?.let { u -> runCatching {
+                io.github.notoboto.unison.restoreBackup(ctx, ctx.contentResolver.openInputStream(u)!!.bufferedReader().readText()) { problems ->
+                    if (problems.isNotEmpty()) scope.launch { snack.showSnackbar("Источники: ${problems.first()}") }
+                } }
             .onSuccess { scope.launch { app.repo.refreshAll(); snack.showSnackbar("Восстановлено") } }
             .onFailure { scope.launch { snack.showSnackbar("Это не резервная копия Unison") } } }
     }

@@ -466,7 +466,12 @@ fun BrowseScreen(nav: NavController) {
                 val qq = gq.trim().lowercase()
                 val hits = st.sources.flatMap { src -> catalogs[src.url].orEmpty().filter { m ->
                     listOf(m.title, m.author.orEmpty(), m.description.orEmpty(), m.tags.joinToString(" ")).any { it.lowercase().contains(qq) } }.map { src to it } }
-                item { GroupHeader(if (hits.isEmpty()) "Ничего не найдено" else "Найдено: ${hits.size}") }
+                item {
+                    ListItem(headlineContent = { Text("Искать «${gq.trim()}» в расширениях") },
+                        leadingContent = { Icon(Icons.Filled.Search, null, tint = MaterialTheme.colorScheme.primary) },
+                        modifier = Modifier.clickable { nav.navigate("gsearch?q=" + android.net.Uri.encode(gq.trim())) })
+                }
+                item { GroupHeader(if (hits.isEmpty()) "В каталогах Unison ничего не найдено" else "Найдено в каталогах Unison: ${hits.size}") }
                 items(hits, key = { (src, m) -> bookKey(src.url, m.id) }) { (src, m) ->
                     val b = Book(src, m)
                     ListItem(headlineContent = { Text(m.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
@@ -488,6 +493,8 @@ fun BrowseScreen(nav: NavController) {
                     leadingContent = { Icon(Icons.Filled.PhoneAndroid, null, tint = MaterialTheme.colorScheme.primary) },
                     modifier = Modifier.clickable { nav.navigate("catalog/-1") })
             }
+            item { GroupHeader("Сайты (расширения)") }
+            item { InstalledSourcesRows(nav) }
             item { GroupHeader("Источники") }
             itemsIndexed(st.sources) { i, src ->
                 val n = catalogs[src.url]?.size

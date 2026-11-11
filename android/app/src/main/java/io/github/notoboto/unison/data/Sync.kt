@@ -29,7 +29,9 @@ object Sync {
     fun export(store: Store, repo: Repo): String {
         val s = store.s
         val keys = keyMap(store, repo)
-        val ext = { k: String -> keys[k]?.let { "${it.first}|${it.second}" } }
+        // only books of web sources: imported (local://) and plugin (src://) books have device-specific ids
+        // until sync v2 (SOURCES_DESIGN.md §11, decision 22)
+        val ext = { k: String -> keys[k]?.takeIf { isWebSource(it.first) }?.let { "${it.first}|${it.second}" } }
         val catName = s.categories.associate { it.id to it.name }
         val obj = buildJsonObject {
             put("unison", 1); put("exported", System.currentTimeMillis()); put("device", "Android")
@@ -76,6 +78,7 @@ object Sync {
             for ((ek, v) in books) {
                 val bo = v.jsonObject
                 val src = ek.substringBeforeLast('|'); val id = ek.substringAfterLast('|')
+                if (!isWebSource(src)) continue          // local:// and src:// books are not synced yet (decision 22)
                 val k = bookKey(src, id); nb++
                 if (s.sources.none { it.url == src }) s = s.copy(sources = s.sources + Source(src, src.removePrefix("https://").substringBefore('/')))
                 if (bo["inLibrary"]?.jsonPrimitive?.booleanOrNull == true && s.library.none { bookKey(it.sourceUrl, it.bookId) == k })
@@ -110,6 +113,7 @@ object Sync {
             val hist = s.history.associateBy { it.book to it.n }.toMutableMap()
             o["history"]?.jsonArray?.forEach { hv ->
                 val h = hv.jsonObject; val ek = h["book"]?.jsonPrimitive?.content ?: return@forEach
+                if (!isWebSource(ek.substringBeforeLast('|'))) return@forEach
                 val k = bookKey(ek.substringBeforeLast('|'), ek.substringAfterLast('|'))
                 val n = h["n"]?.jsonPrimitive?.intOrNull ?: return@forEach; val ts = h["ts"]?.jsonPrimitive?.longOrNull ?: 0
                 if ((hist[k to n]?.ts ?: -1) < ts) hist[k to n] = HistEntry(k, n, ts)

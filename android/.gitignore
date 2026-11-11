@@ -9,3 +9,4 @@ keystore.properties
 *.iml
 .kotlin/
 app/libs/*.aar
+!app/libs/quickjs-kt-ng-*.aar
