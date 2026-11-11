@@ -1,3 +1,4 @@
 # Signed plugin repository snapshot and golden test data are checked byte-for-byte (signature, sha256): never convert line endings
 android/app/src/main/assets/sources/** -text
 android/app/src/androidTest/assets/golden/** -text
+android/app/libs/*.sha256 -text
