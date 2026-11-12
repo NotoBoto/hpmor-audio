@@ -144,7 +144,7 @@ object Sync {
                 }
                 exForeign.remove(ek)
                 val (k, libId, mapN) = here
-                bo.extra(ENTRY_KEYS + "chapterIds").takeIf { it.isNotEmpty() }?.let { exBooks[ek] = JsonObject(exBooks[ek]?.let { o -> (o as JsonObject) + it } ?: it) }
+                bo.extra(if (isPluginSource(src)) ENTRY_KEYS + "chapterIds" else ENTRY_KEYS).takeIf { it.isNotEmpty() }?.let { exBooks[ek] = JsonObject(exBooks[ek]?.let { o -> (o as JsonObject) + it } ?: it) }
                 nb++
                 if (isWebSource(src) && s.sources.none { it.url == src }) s = s.copy(sources = s.sources + Source(src, src.removePrefix("https://").substringBefore('/')))
                 if (bo["inLibrary"]?.jsonPrimitive?.booleanOrNull == true && s.library.none { bookKey(it.sourceUrl, it.bookId) == k })

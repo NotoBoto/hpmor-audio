@@ -1,2 +1,3 @@
-Copied from NotoBoto/unison-sources (e025886): site/dist/wikisource-ru.js, tests/cases/wikisource-ru, tests/expected/wikisource-ru.
-Refresh after the plugin or its golden cases change.
+Copied from NotoBoto/unison-sources (site/dist/wikisource-ru.js, tests/cases|expected/wikisource-ru → <name>.*.json)
+and NotoBoto/unison-sources-extra (site/dist/ranobelib.js, tests/cases|expected/ranobelib → ranobelib-<name>.*.json).
+Refresh after a plugin or its golden cases change.

@@ -280,6 +280,8 @@ private fun NavGraph(nav: NavHostController) {
         composable("extensions") { io.github.notoboto.unison.ui.ExtensionsScreen(nav) }
         composable("source/{id}") { io.github.notoboto.unison.ui.SourceScreen(nav, it.arguments?.getString("id")!!) }
         composable("srcbook/{id}/{book}") { io.github.notoboto.unison.ui.PluginBookScreen(nav, it.arguments?.getString("id")!!, android.net.Uri.decode(it.arguments?.getString("book")!!)) }
+        composable("srclogin/{id}") { io.github.notoboto.unison.ui.SourceLoginScreen(nav, it.arguments?.getString("id")!!) }
+        composable("srcweb/{id}?url={url}") { io.github.notoboto.unison.ui.SourceBrowserScreen(nav, it.arguments?.getString("id")!!, it.arguments?.getString("url").orEmpty()) }
         composable("gsearch?q={q}") { io.github.notoboto.unison.ui.GlobalSearchScreen(nav, it.arguments?.getString("q").orEmpty()) }
         composable("more") { MoreScreen(nav) }
         composable("settings") { SettingsScreen(nav) }

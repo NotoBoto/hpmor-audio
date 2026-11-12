@@ -238,8 +238,10 @@ fun SourceScreen(nav: NavController, pluginId: String) {
     var page by remember { mutableStateOf(0) }
     var hasNext by remember { mutableStateOf(true) }
     var loading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<Throwable?>(null) }
     val scope = rememberCoroutineScope()
+    val authChanges by app.sources.auth.changes.collectAsState()
+    val loggedIn = remember(authChanges) { app.sources.auth.loggedIn(p) }
 
     fun loadMore() {
         if (loading || !hasNext) return
@@ -256,15 +258,19 @@ fun SourceScreen(nav: NavController, pluginId: String) {
             }.onSuccess { r ->
                 items += r.items.filter { st.settings.showNsfw || !it.nsfw }.filter { n -> items.none { it.id == n.id } }
                 hasNext = r.hasNext && r.items.isNotEmpty(); page = next
-            }.onFailure { error = errorText(it) }
+            }.onFailure { error = it }
             loading = false
         }
     }
     fun reset() { items.clear(); page = 0; hasNext = true; error = null; loadMore() }
-    LaunchedEffect(tab, submitted) { reset() }
+    LaunchedEffect(tab, submitted, authChanges) { reset() }
 
     Scaffold(topBar = {
-        BackBar(nav, p.name) { IconButton(onClick = { nav.context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(p.site))) }) { Icon(Icons.Filled.OpenInBrowser, "Открыть сайт") } }
+        BackBar(nav, p.name) {
+            if (p.login != null) TextButton(onClick = { if (loggedIn) sourceLogout(nav.context, p) else nav.navigate(loginRoute(p.id)) }) {
+                Text(if (loggedIn) "Выйти" else "Войти")
+            }
+            IconButton(onClick = { nav.context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(p.site))) }) { Icon(Icons.Filled.OpenInBrowser, "Открыть сайт") } }
     }) { pad ->
         Column(Modifier.padding(pad)) {
             if (tabs.size > 1) PrimaryTabRow(selectedTabIndex = tabs.indexOfFirst { it.first == tab }.coerceAtLeast(0)) {
@@ -282,14 +288,7 @@ fun SourceScreen(nav: NavController, pluginId: String) {
                 item {
                     when {
                         loading -> Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator(Modifier.size(24.dp)) }
-                        error != null -> Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(error!!, color = MaterialTheme.colorScheme.error)
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(onClick = { loadMore() }) { Text("Повторить") }
-                                OutlinedButton(onClick = { nav.context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(p.site))) }) { Text("Открыть в браузере") }
-                            }
-                        }
+                        error != null -> SourceError(nav, p, error!!) { loadMore() }
                         items.isEmpty() && tab == "search" && submitted.isBlank() -> Text("Введите запрос", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         items.isEmpty() -> Text("Ничего не найдено", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -382,13 +381,15 @@ fun PluginBookScreen(nav: NavController, pluginId: String, bookId: String) {
     val app = LocalContext.current.app()
     var details by remember { mutableStateOf<BookDetails?>(null) }
     var chapters by remember { mutableStateOf<List<ChapterStub>?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<Throwable?>(null) }
     var retry by remember { mutableStateOf(0) }
-    val name = remember { app.sources.repos.installed()[pluginId]?.info?.name ?: pluginId }
-    LaunchedEffect(retry) {
+    val plugin = remember { app.sources.repos.installed()[pluginId]?.info }
+    val name = plugin?.name ?: pluginId
+    val authChanges by app.sources.auth.changes.collectAsState()
+    LaunchedEffect(retry, authChanges) {
         error = null
         runCatching { details = app.sources.details(pluginId, bookId); chapters = app.sources.chapters(pluginId, bookId) }
-            .onFailure { error = errorText(it) }
+            .onFailure { error = it }
     }
     val d = details
     Scaffold(topBar = {
@@ -427,7 +428,7 @@ fun PluginBookScreen(nav: NavController, pluginId: String, bookId: String) {
                                 app.store.update { s -> if (s.library.any { it.sourceUrl == src && it.bookId == id }) s
                                     else s.copy(library = s.library + io.github.notoboto.unison.data.LibEntry(src, id)) }
                                 nav.navigate("book/$key")
-                            }.onFailure { error = errorText(it) }
+                            }.onFailure { error = it }
                             adding = false
                         }
                     }, Modifier.padding(horizontal = 16.dp).fillMaxWidth(), enabled = !adding) {
@@ -437,13 +438,7 @@ fun PluginBookScreen(nav: NavController, pluginId: String, bookId: String) {
                 }
                 d?.description?.let { Text(it, Modifier.padding(horizontal = 16.dp), fontSize = 15.sp) }
                 if (d?.tags?.isNotEmpty() == true) Text(d.tags.joinToString(" • "), Modifier.padding(16.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                error?.let {
-                    Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(it, color = MaterialTheme.colorScheme.error)
-                        Spacer(Modifier.height(8.dp))
-                        Button(onClick = { retry++ }) { Text("Повторить") }
-                    }
-                }
+                error?.let { SourceError(nav, plugin, it) { retry++ } }
                 if (d == null && error == null) Row(Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.Center) { CircularProgressIndicator() }
             }
             chapters?.let { list ->

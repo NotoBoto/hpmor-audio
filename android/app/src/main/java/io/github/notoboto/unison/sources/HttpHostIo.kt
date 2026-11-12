@@ -25,11 +25,13 @@ import kotlin.math.min
  * - 429/503: waits Retry-After with exponential back-off, after 3 failures RATE_LIMITED;
  * - 418 or a maintenance page: UNAVAILABLE (no retries); 403 with Cf-Mitigated: challenge: NEEDS_BROWSER;
  * - storage: a small JSON file per plugin (≤ 1 MB), no secrets in it (§13).
+ * - login token, browser UA and cookies from [auth] (§19.2), added by the host: plugins never see them.
  * Rate-limit waits happen outside JavaScript, so they do not count against the 30 s JS limit (§4).
  */
 class HttpHostIo(
     http: OkHttpClient,
     private val storageDir: File,
+    private val auth: SourceAuth? = null,
 ) : HostIo {
     private val http = http.newBuilder().followRedirects(true).build()
     private val buckets = ConcurrentHashMap<String, Bucket>()
@@ -39,14 +41,17 @@ class HttpHostIo(
         if (!hostAllowed(url, plugin.domains)) throw PluginException("ENGINE", "fetch to a domain outside ${plugin.domains}: $url")
         var attempt = 0
         while (true) {
+            val hostHeaders = auth?.headersFor(plugin, url) ?: emptyMap()
             buckets.getOrPut(plugin.id) { Bucket(plugin.rateLimit) }.take()
             val req = Request.Builder().url(url)
                 .header("User-Agent", USER_AGENT)
                 .apply { headers.forEach { (k, v) -> header(k, v) } }
+                .apply { hostHeaders.forEach { (k, v) -> header(k, v) } }
                 .method(method.uppercase(), body?.toRequestBody() ?: if (method.equals("POST", true)) ByteArray(0).toRequestBody() else null)
                 .build()
             val r = withContext(Dispatchers.IO) {
                 http.newCall(req).execute().use { resp ->
+                    if (auth != null && auth.usesCookies(plugin)) auth.storeCookies(resp.request.url.toString(), resp.headers("Set-Cookie"))
                     val text = resp.body?.string() ?: ""     // charset from Content-Type: plugins always get a string
                     val h = buildMap { for (name in KEPT_HEADERS) resp.header(name)?.let { put(name.lowercase(), it) } }
                     Triple(resp.code, h, FetchResult(resp.code, h, text, resp.request.url.toString()))

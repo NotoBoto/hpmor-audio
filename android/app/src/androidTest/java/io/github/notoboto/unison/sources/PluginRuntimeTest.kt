@@ -43,11 +43,11 @@ class PluginRuntimeTest {
         override fun log(plugin: PluginInfo, level: String, message: String) {}
     }
 
-    private fun runCase(name: String) = runBlocking<Unit> {
+    private fun runCase(name: String, plugin: String = "wikisource-ru") = runBlocking<Unit> {
         val case = pluginJson.parseToJsonElement(asset("$name.case.json")).jsonObject
         val expected = pluginJson.parseToJsonElement(asset("$name.expected.json")).jsonObject
         val io = FixtureIo(case["fixtures"]!!.jsonObject)
-        PluginRuntime.load(asset("wikisource-ru.js"), io).use { rt ->
+        PluginRuntime.load(asset("$plugin.js"), io).use { rt ->
             assertEquals(expected["manifest"]!!.jsonObject["id"], pluginJson.parseToJsonElement(pluginJson.encodeToString(PluginInfo.serializer(), rt.manifest)).jsonObject["id"])
             assertEquals(expected["core"]!!.jsonObject["version"]!!.jsonPrimitive.content, rt.coreVersion)
             val calls = case["calls"]!!.jsonArray
@@ -69,6 +69,10 @@ class PluginRuntimeTest {
 
     @Test fun goldenHero() = runCase("hero")
     @Test fun goldenSingleAndNested() = runCase("single-and-nested")
+    @Test fun goldenRanobelibBook() = runCase("ranobelib-mother-of-learning", "ranobelib")
+    @Test fun goldenRanobelibBranchesAndAdult() = runCase("ranobelib-branches-adult", "ranobelib")
+    @Test fun goldenRanobelibProsemirror() = runCase("ranobelib-prosemirror", "ranobelib")
+    @Test fun goldenRanobelibCatalog() = runCase("ranobelib-catalog", "ranobelib")
 
     @Test fun javascriptTimeoutIsEnforced() = runBlocking<Unit> {
         val code = """globalThis.__unison = { manifest: ${minimalManifest()}, core: { version: "t" },

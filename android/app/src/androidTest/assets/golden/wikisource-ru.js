@@ -1,4 +1,4 @@
-/* wikisource-ru 1.0.0 · api 1 · qjs-ng-0.12.1 · core 1.0.0 */
+/* wikisource-ru 1.0.1 · api 1 · qjs-ng-0.12.1 · core 1.1.0 */
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
@@ -13,7 +13,7 @@
   var manifest_default = {
     id: "wikisource-ru",
     name: "Викитека",
-    version: "1.0.0",
+    version: "1.0.1",
     api: 1,
     lang: "ru",
     site: "https://ru.wikisource.org",
@@ -29,7 +29,7 @@
   };
 
   // lib/core/version.ts
-  var CORE_VERSION = "1.0.0";
+  var CORE_VERSION = "1.1.0";
 
   // lib/runtime.ts
   var pending = /* @__PURE__ */ new Map();

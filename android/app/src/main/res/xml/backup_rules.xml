@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android ≤ 11 Auto Backup. Everything else stays as before; sources' cookies and site storage (WebView) are never
+     backed up (SOURCES_DESIGN.md §13). Login tokens live in noBackupFilesDir, which is never backed up anyway. -->
+<full-backup-content>
+    <exclude domain="root" path="app_webview/" />
+</full-backup-content>

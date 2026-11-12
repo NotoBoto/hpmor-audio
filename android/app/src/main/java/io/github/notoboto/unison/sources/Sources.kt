@@ -10,7 +10,9 @@ import okhttp3.OkHttpClient
  */
 class Sources(context: Context, http: OkHttpClient) {
     val repos = PluginRepositories(context.applicationContext, http)
-    val io = HttpHostIo(http, repos.storageDir)
+    /** Login tokens, browser UA and cookies of sources (§19.2). */
+    val auth = SourceAuth(context.applicationContext)
+    val io = HttpHostIo(http, repos.storageDir, auth)
     val pool = PluginPool(loader = { id -> load(id) })
     /** Plugin books on the phone: chapter tables, texts (§8.3, §19.5). */
     val books by lazy { SrcBooks(context.applicationContext, this) }
