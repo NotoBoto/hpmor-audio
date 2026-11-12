@@ -249,7 +249,7 @@ fun SettingsScreen(nav: NavController, section: String? = null) {
                 }
                     }
                     "reader" -> {
-                SwitchRow("Не гасить экран", "Пока открыта глава и идёт воспроизведение", s.keepScreenOn) { v -> set { it.copy(keepScreenOn = v) } }
+                SwitchRow("Не гасить экран", "Пока открыта глава", s.keepScreenOn) { v -> set { it.copy(keepScreenOn = v) } }
                 PickRow("«Ранее в книге»", s.recapAfterHours, listOf(0 to "Не показывать", 6 to "После перерыва от 6 ч", 12 to "После перерыва от 12 ч",
                     24 to "После перерыва от суток", 72 to "После перерыва от 3 дней")) { v -> set { it.copy(recapAfterHours = v) } }
                 PickRow("Автопрокрутка текста", s.follow, listOf("page" to "Скачками, как страницы", "center" to "Плавно, строка посередине экрана",
@@ -266,6 +266,8 @@ fun SettingsScreen(nav: NavController, section: String? = null) {
                     "downloads" -> {
                 SwitchRow("Только по Wi‑Fi", "Без Wi‑Fi загрузки ждут в очереди", s.wifiOnly) { v -> set { it.copy(wifiOnly = v) } }
                 PickRow("Скачивать наперёд", s.autoDownloadNext, listOf(0 to "Выключено", 1 to "1 главу", 2 to "2 главы", 3 to "3 главы", 5 to "5 глав", 10 to "10 глав")) { v -> set { it.copy(autoDownloadNext = v) } }
+                Text("Аудио книг с сайтов, текст книг из расширений. Озвучка синтезатором — отдельно:", Modifier.padding(horizontal = 16.dp, vertical = 2.dp), fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                PickRow("Озвучивать наперёд", s.voiceAhead, listOf(0 to "Выключено", 1 to "1 главу", 2 to "2 главы", 3 to "3 главы", 5 to "5 глав")) { v -> set { it.copy(voiceAhead = v) } }
                 SwitchRow("Удалять прослушанные", "Глава удаляется с телефона, когда дослушана", s.autoDelete) { v -> set { it.copy(autoDelete = v) } }
                 SwitchRow("Обновлять переозвученные", "Скачанная глава заменяется новой версией сама", s.autoUpdate) { v -> set { it.copy(autoUpdate = v) } }
                 SwitchRow("Уведомлять о завершении", "«Скачано N глав» по окончании очереди", s.notifyDownloads) { v -> set { it.copy(notifyDownloads = v) } }
@@ -274,7 +276,7 @@ fun SettingsScreen(nav: NavController, section: String? = null) {
                     set { it.copy(storageLimitGb = v) }; app.downloads.enforceLimit() }
                     }
                     "tts" -> {
-                PickRow("Озвучивать вперёд", s.voiceAhead, listOf(0 to "Выключено", 1 to "1 главу", 2 to "2 главы", 3 to "3 главы", 5 to "5 глав")) { v -> set { it.copy(voiceAhead = v) } }
+                PickRow("Озвучивать наперёд", s.voiceAhead, listOf(0 to "Выключено", 1 to "1 главу", 2 to "2 главы", 3 to "3 главы", 5 to "5 глав")) { v -> set { it.copy(voiceAhead = v) } }
                 SwitchRow("Только на зарядке", "Озвучивать наперёд, только когда телефон заряжается", s.voiceAheadCharging) { v -> set { it.copy(voiceAheadCharging = v) } }
                 SwitchRow("Только по Wi‑Fi", "Главы с сайтов скачиваются для озвучки только по Wi‑Fi", s.voiceAheadWifi) { v -> set { it.copy(voiceAheadWifi = v) } }
                 SwitchRow("Переозвучивать изменённые главы", "Если текст главы на сайте изменился, а вы её ещё не начали", s.revoiceChanged) { v -> set { it.copy(revoiceChanged = v) } }

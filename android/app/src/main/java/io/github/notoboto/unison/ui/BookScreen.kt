@@ -1,5 +1,7 @@
 package io.github.notoboto.unison.ui
 
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -107,6 +109,8 @@ fun BookScreen(nav: NavController, key: String) {
     val catalogs by app.repo.catalogs.collectAsState()
     val chaptersMap by app.repo.chapters.collectAsState()
     val dlJobs by app.downloads.states.collectAsState()
+    val textJobs by app.downloads.textStates.collectAsState()
+    val textRev by app.downloads.textRev.collectAsState()
     val book: Book = remember(catalogs, chaptersMap) { app.repo.book(key) } ?: run { EmptyState("📕", "Книга не найдена"); return }
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
@@ -150,6 +154,10 @@ fun BookScreen(nav: NavController, key: String) {
     val inLib = st.library.any { io.github.notoboto.unison.data.bookKey(it.sourceUrl, it.bookId) == key }
 
     fun dl(n: Int) = app.downloads.state(book, n, dlJobs)
+    fun txt(n: Int) = textRev.let { app.downloads.textState(book, n, textJobs) }
+    val textBook = io.github.notoboto.unison.data.isTextSource(book.source.url)
+    val ownText = book.source.url == io.github.notoboto.unison.data.LOCAL_URL     // imported: the text is always here
+    val audioLabel = if (textBook) "Озвучить" else "Скачать аудио"
     fun continueTarget(): Int? {
         val last = st.last[key]
         var ch = book.chapters.find { it.n == last }
@@ -226,15 +234,24 @@ fun BookScreen(nav: NavController, key: String) {
                         IconButton(onClick = { dlMenu = true }) { Icon(Icons.Filled.Download, "Скачать") }
                         DropdownMenu(dlMenu, { dlMenu = false }) {
                             val from = continueTarget() ?: 0
-                            val ahead = book.chaptersFrom(from).filter { !app.store.isDownloaded(key, it.n) }.map { it.n }
-                            fun q(ns: List<Int>) { dlMenu = false; val k = app.downloads.enqueue(book, ns); scope.launch { snack.showSnackbar(if (k > 0) "В очереди: ${chapters(k)}" else "Уже скачано") } }
-                            if (io.github.notoboto.unison.data.isTextSource(book.source.url)) Text("Озвучить синтезатором:", Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            DropdownMenuItem({ Text("Следующую главу") }, { q(ahead.take(1)) })
-                            DropdownMenuItem({ Text("Следующие 5") }, { q(ahead.take(5)) })
-                            DropdownMenuItem({ Text("Следующие 10") }, { q(ahead.take(10)) })
-                            DropdownMenuItem({ Text("Непрослушанные") }, { q(book.chapters.filter { prog[it.n]?.done != true }.map { it.n }) })
-                            DropdownMenuItem({ Text("Все") }, { q(book.chapters.map { it.n }) })
+                            val unread = book.chapters.filter { prog[it.n]?.done != true }.map { it.n }
+                            fun q(ns: List<Int>, text: Boolean) {
+                                dlMenu = false
+                                val k = if (text) app.downloads.enqueueText(book, ns) else app.downloads.enqueue(book, ns)
+                                scope.launch { snack.showSnackbar(if (k > 0) "В очереди: ${chapters(k)}" else if (text) "Текст уже скачан" else "Уже есть") }
+                            }
+                            @Composable fun section(title: String, text: Boolean) {
+                                val ahead = book.chaptersFrom(from).map { it.n }.filter { if (text) !app.downloads.hasText(book, it) else !app.store.isDownloaded(key, it) }
+                                Text(title, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                DropdownMenuItem({ Text("Следующую главу") }, { q(ahead.take(1), text) })
+                                DropdownMenuItem({ Text("Следующие 5") }, { q(ahead.take(5), text) })
+                                DropdownMenuItem({ Text("Следующие 10") }, { q(ahead.take(10), text) })
+                                DropdownMenuItem({ Text("Непрослушанные") }, { q(unread, text) })
+                                if (text) DropdownMenuItem({ Text("Все") }, { q(book.chapters.map { it.n }, true) })
+                            }
+                            if (!ownText) section("Скачать текст:", true)
+                            if (!ownText) androidx.compose.material3.HorizontalDivider()
+                            section(if (textBook) "Озвучить синтезатором:" else "Скачать аудио:", false)
                         }
                     }
                     IconButton(onClick = { filterSheet = true }) { Icon(Icons.Filled.FilterList, "Сортировка") }
@@ -263,8 +280,9 @@ fun BookScreen(nav: NavController, key: String) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         SelAction(Icons.Filled.DoneAll, "Прослушано") { app.store.setDone(key, sel, true); sel = emptySet() }
                         SelAction(Icons.Filled.RemoveDone, "Не прослушано") { app.store.setDone(key, sel, false); sel = emptySet() }
-                        SelAction(Icons.Filled.Download, "Скачать") { app.downloads.enqueue(book, sel); sel = emptySet() }
-                        SelAction(Icons.Filled.Delete, "Удалить") { app.downloads.delete(book, sel); sel = emptySet() }
+                        if (!ownText) SelAction(Icons.Filled.Download, "Текст") { app.downloads.enqueueText(book, sel); sel = emptySet() }
+                        SelAction(if (textBook) Icons.Filled.RecordVoiceOver else Icons.Filled.Headphones, audioLabel) { app.downloads.enqueue(book, sel); sel = emptySet() }
+                        SelAction(Icons.Filled.Delete, "Удалить") { app.downloads.delete(book, sel); app.downloads.deleteText(book, sel); sel = emptySet() }
                     }
                 }
             }
@@ -306,12 +324,14 @@ fun BookScreen(nav: NavController, key: String) {
                 SwipeRow(s.swipeLeft, s.swipeRight, read = p.done, downloaded = ch.n in dledMap, enabled = sel.isEmpty(),
                     onAction = { a -> when (a) {
                         "read" -> app.store.setDone(key, listOf(ch.n), !p.done)
-                        "download" -> if (ch.n in dledMap) app.downloads.delete(book, listOf(ch.n)) else app.downloads.enqueue(book, listOf(ch.n))
+                        "download" -> if (txt(ch.n) == io.github.notoboto.unison.download.DlState.Done) app.downloads.deleteText(book, listOf(ch.n)) else app.downloads.enqueueText(book, listOf(ch.n))
                     } }) {
-                ChapterRow(chName(ch, s.fullTitles), subline(p, ch) + (if (bm > 0) " • закладок: $bm" else ""), read = p.done, selected = ch.n in sel, dl = dl(ch.n),
+                // the button downloads the text; the audio is made or downloaded from the selection bar (long press)
+                ChapterRow(chName(ch, s.fullTitles), subline(p, ch, !textBook || dl(ch.n).let { it == io.github.notoboto.unison.download.DlState.Done || it == io.github.notoboto.unison.download.DlState.Outdated }) + (if (bm > 0) " • закладок: $bm" else ""), read = p.done, selected = ch.n in sel, dl = txt(ch.n),
                     onClick = { if (sel.isNotEmpty()) toggle(ch.n) else open(ch.n) }, onLongClick = { longPress(ch.n) },
-                    onDownload = { app.downloads.enqueue(book, listOf(ch.n)) }, onCancel = { app.downloads.cancel(book, ch.n) },
-                    onDelete = { app.downloads.delete(book, listOf(ch.n)) }, onUpdate = { app.downloads.enqueue(book, listOf(ch.n), force = true) })
+                    onDownload = { app.downloads.enqueueText(book, listOf(ch.n)) }, onCancel = { app.downloads.cancelText(book, ch.n) },
+                    onDelete = { app.downloads.deleteText(book, listOf(ch.n)) }, onUpdate = { app.downloads.enqueueText(book, listOf(ch.n)) },
+                    audio = dl(ch.n), trailing = if (ownText) ({}) else null)
                 }
             }
         }

@@ -203,6 +203,10 @@ class TtsWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
             withContext(Dispatchers.Main) { app.store.markDownloaded(key, n, "tts"); app.downloads.finished(ok = true) }
             return Result.success()
         } catch (e: Exception) {
+            android.util.Log.w("TtsWorker", "voicing $key/$n failed", e)
+            // no network for the plugin right now (screen off, Doze, a flaky connection): try again later instead of giving up
+            val transient = e is java.io.IOException || (e is io.github.notoboto.unison.sources.PluginException && e.info.code in setOf("UNAVAILABLE", "TIMEOUT", "RATE_LIMITED"))
+            if (!isStopped && transient && runAttemptCount < 5) return Result.retry()
             if (!isStopped) app.downloads.finished(ok = false)
             return Result.failure()
         } finally {

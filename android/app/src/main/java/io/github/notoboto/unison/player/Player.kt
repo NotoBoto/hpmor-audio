@@ -367,10 +367,15 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
         return item to start
     }
 
+    /** Whether chapter [n] has audio: web books always, text books only once voiced, imported audiobooks always. */
+    fun hasAudio(b: Book, n: Int): Boolean =
+        !io.github.notoboto.unison.data.isTextSource(b.source.url) || app.store.isDownloaded(b.key, n) ||
+            (b.source.url == io.github.notoboto.unison.data.LOCAL_URL && io.github.notoboto.unison.data.Local.isAudio(ctx, b.meta.id))
+
     /** Load a chapter; continue from saved position unless it was finished. */
     fun open(b: Book, n: Int, autoplay: Boolean) {
         if (now.value?.book?.key == b.key && now.value?.n == n && exo.mediaItemCount > 0) { if (autoplay) play(); return }
-        if (io.github.notoboto.unison.data.isTextSource(b.source.url) && !app.store.isDownloaded(b.key, n) && !(b.source.url == io.github.notoboto.unison.data.LOCAL_URL && io.github.notoboto.unison.data.Local.isAudio(ctx, b.meta.id))) {
+        if (!hasAudio(b, n)) {
             resolve(b, n); exo.clearMediaItems(); return       // text only until the chapter is voiced
         }
         val (item, start) = resolve(b, n) ?: return

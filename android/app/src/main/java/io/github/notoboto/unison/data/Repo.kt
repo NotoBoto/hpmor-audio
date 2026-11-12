@@ -206,6 +206,8 @@ class Repo(private val context: Context, private val store: Store) {
         val k = b.key + ":" + n
         synchronized(textCache) { textCache[k] }?.let { return@withContext it }
         val voiced = store.isDownloaded(b.key, n) && runCatching { files.exists(b.key, n, "json") }.getOrDefault(false)
+        // a web chapter whose text alone was downloaded (no audio): read the local copy
+        val localText = voiced || (!isTextSource(b.source.url) && runCatching { files.exists(b.key, n, "json") }.getOrDefault(false))
         if (!voiced && isTextSource(b.source.url)) {
             // a plugin chapter is fetched through the plugin the first time it is opened (§8.3)
             if (isPluginSource(b.source.url) && !TextBooks.hasText(context, b.source.url, b.meta.id, n)) {
@@ -214,7 +216,7 @@ class Repo(private val context: Context, private val store: Store) {
             }
             return@withContext TextBooks.chapterText(context, b.source.url, b.meta.id, n)
         }
-        val text = if (voiced) files.readText(b.key, n, "json") else get(b.chUrl(n, "json"))
+        val text = if (localText) files.readText(b.key, n, "json") else get(b.chUrl(n, "json"))
         val t = parseChapter(text)
         synchronized(textCache) { textCache[k] = t }
         t

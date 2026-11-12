@@ -186,9 +186,9 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
         runCatching { app.repo.chapterText(cur.book, cur.n) }.onSuccess { text = it }.onFailure { error = "Глава не скачана, а интернета нет" }
     }
 
-    // keep the screen on while playing
+    // keep the screen on while a chapter is open (reading or listening)
     val view = LocalView.current
-    DisposableEffect(playing, s.keepScreenOn) { view.keepScreenOn = playing && s.keepScreenOn; onDispose { view.keepScreenOn = false } }
+    DisposableEffect(s.keepScreenOn) { view.keepScreenOn = s.keepScreenOn; onDispose { view.keepScreenOn = false } }
 
     var immersive by remember { mutableStateOf(false) }
     DisposableEffect(immersive) {
@@ -339,10 +339,38 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
                 })
         }
 
-        if (readOnly && !immersive) androidx.compose.material3.ExtendedFloatingActionButton(onClick = { readOnlyPref = false; visibleTime?.let { player.seekTo(it) }; player.play() },
+        if (readOnly && !immersive && np?.let { voicedTag != null || player.hasAudio(it.book, it.n) } == true) androidx.compose.material3.ExtendedFloatingActionButton(onClick = { readOnlyPref = false; visibleTime?.let { player.seekTo(it) }; player.play() },
             icon = { Icon(Icons.Filled.PlayArrow, null) }, text = { Text("Слушать отсюда") },
             modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(20.dp))
-        AnimatedVisibility(!immersive && !readOnly, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
+        // nothing to play yet (a text chapter that is not voiced): chapter navigation and «Озвучить» instead of the player
+        val audio = np?.let { voicedTag != null || player.hasAudio(it.book, it.n) } ?: false
+        AnimatedVisibility(!immersive && !audio && np != null, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
+            val cur = np ?: return@AnimatedVisibility
+            val jobs by app.downloads.states.collectAsState()
+            val dlState = app.downloads.state(cur.book, cur.n, jobs)
+            Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+                modifier = Modifier.onSizeChanged { barH = with(density) { it.height.toDp() } }) {
+                Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { player.neighbour(-1)?.let { m -> player.open(cur.book, m, false) } }, enabled = player.neighbour(-1) != null) {
+                        Icon(Icons.Filled.SkipPrevious, "Предыдущая глава") }
+                    Spacer(Modifier.weight(1f))
+                    when (dlState) {
+                        is io.github.notoboto.unison.download.DlState.Running, io.github.notoboto.unison.download.DlState.Queued -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Text(if (dlState is io.github.notoboto.unison.download.DlState.Running) "Озвучиваю… ${(dlState.p * 100).toInt()}%" else "В очереди на озвучку", fontSize = 14.sp)
+                        }
+                        else -> androidx.compose.material3.FilledTonalButton(onClick = { app.downloads.enqueue(cur.book, listOf(cur.n)) }) {
+                            Icon(Icons.Filled.PlayArrow, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Озвучить главу")
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = { player.neighbour(1)?.let { m -> player.open(cur.book, m, false) } }, enabled = player.neighbour(1) != null) {
+                        Icon(Icons.Filled.SkipNext, "Следующая глава") }
+                }
+            }
+        }
+        AnimatedVisibility(!immersive && !readOnly && audio, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
                 modifier = Modifier.onSizeChanged { barH = with(density) { it.height.toDp() } }) {
                 Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 6.dp)) {

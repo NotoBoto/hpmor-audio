@@ -1,5 +1,7 @@
 package io.github.notoboto.unison.ui
 
+import androidx.compose.material.icons.outlined.HourglassEmpty
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -78,13 +80,26 @@ fun hhmm(t: LocalDateTime) = t.format(DateTimeFormatter.ofPattern("HH:mm"))
 
 // duration is 0 for a chapter whose text is not on the phone yet (plugin books): no division by zero → NaN
 fun progressOf(p: Progress, ch: ChapterMeta) = if (p.done) 1f else if (ch.duration <= 0) 0f else (p.pos / ch.duration).toFloat().coerceIn(0f, 1f)
-fun subline(p: Progress, ch: ChapterMeta): String {
+/** Release date of a chapter as in Mihon: «Сегодня», «Вчера», otherwise 12.11.2026. */
+fun chapterDate(s: String?): String? {
+    val d = parseDate(s)?.toLocalDate() ?: s?.take(10)?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: return null
+    val today = LocalDate.now()
+    return when (d) { today -> "Сегодня"; today.minusDays(1) -> "Вчера"; else -> d.format(DateTimeFormatter.ofPattern("dd.MM.yyyy")) }
+}
+
+/** Line under a chapter: release date, length (only when the audio is known), progress. */
+fun subline(p: Progress, ch: ChapterMeta, hasAudio: Boolean = true): String {
     val f = progressOf(p, ch)
-    return fmt(ch.duration) + when {
-        f >= 1f -> " • прослушано"
-        f > 0.005f -> " • прослушано ${(f * 100).roundToInt()}% • осталось ${hours(ch.duration * (1 - f))}"
-        else -> ""
-    }
+    val known = hasAudio && ch.duration > 0     // text books: the length is an estimate until the chapter is voiced
+    return listOfNotNull(
+        chapterDate(ch.date),
+        if (known) fmt(ch.duration) else null,
+        when {
+            p.done || f >= 1f -> "прослушано"
+            known && f > 0.005f -> "прослушано ${(f * 100).roundToInt()}% • осталось ${hours(ch.duration * (1 - f))}"
+            else -> null
+        },
+    ).joinToString(" • ")
 }
 fun chName(ch: ChapterMeta, full: Boolean) = if (full) ch.title else "Глава ${ch.n}"
 
@@ -133,7 +148,7 @@ fun DlButton(st: DlState, onDownload: () -> Unit, onCancel: () -> Unit, onDelete
 fun ChapterRow(
     title: String, sub: String, read: Boolean, selected: Boolean, dl: DlState,
     onClick: () -> Unit, onLongClick: (() -> Unit)?, onDownload: () -> Unit, onCancel: () -> Unit, onDelete: () -> Unit, onUpdate: () -> Unit,
-    thumb: String? = null, trailing: (@Composable () -> Unit)? = null,
+    thumb: String? = null, trailing: (@Composable () -> Unit)? = null, audio: DlState? = null,
 ) {
     Row(
         Modifier.fillMaxWidth()
@@ -151,7 +166,26 @@ fun ChapterRow(
             Spacer(Modifier.height(3.dp))
             Text(sub, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+        if (audio != null) AudioMark(audio)
         if (trailing != null) trailing() else DlButton(dl, onDownload, onCancel, onDelete, onUpdate)
+    }
+}
+
+/** Whether the chapter's audio is on the phone (downloaded or voiced), or being made. Nothing when there is none. */
+@Composable
+fun AudioMark(st: DlState) {
+    val tint = MaterialTheme.colorScheme.onSurfaceVariant
+    Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+        when (st) {
+            DlState.None -> {}
+            DlState.Queued -> Icon(Icons.Outlined.HourglassEmpty, "Озвучка в очереди", Modifier.size(18.dp), tint = tint)
+            is DlState.Running -> {
+                val p by animateFloatAsState(st.p, label = "voice")
+                CircularProgressIndicator(progress = { p }, Modifier.size(20.dp), strokeWidth = 2.dp, trackColor = MaterialTheme.colorScheme.outlineVariant)
+            }
+            DlState.Done -> Icon(Icons.Filled.Headphones, "Аудио на телефоне", Modifier.size(18.dp), tint = tint)
+            DlState.Outdated -> Icon(Icons.Filled.Headphones, "Есть новая озвучка", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+        }
     }
 }
 

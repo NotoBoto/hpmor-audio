@@ -311,10 +311,12 @@ private fun MiniPlayer(nav: NavHostController) {
     val now by app.player.now.collectAsState()
     val playing by app.player.isPlaying.collectAsState()
     val pos by app.player.position.collectAsState()
-    AnimatedVisibility(now != null) {
+    val st by app.store.state.collectAsState()      // a chapter that gets voiced brings the mini player back
+    // only when there is something to play: not for a text chapter that is not voiced yet
+    AnimatedVisibility(now?.let { st.downloaded[it.book.key]?.containsKey(it.n) == true || app.player.hasAudio(it.book, it.n) } == true) {
         val np = now ?: return@AnimatedVisibility
         Column(Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)) {
-            LinearProgressIndicator(progress = { (pos / np.duration).toFloat().coerceIn(0f, 1f) }, Modifier.fillMaxWidth().height(2.dp),
+            LinearProgressIndicator(progress = { if (np.duration > 0) (pos / np.duration).toFloat().coerceIn(0f, 1f) else 0f }, Modifier.fillMaxWidth().height(2.dp),
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHigh)
             // tap = open the reader, long press = quick controls
             var menu by remember { mutableStateOf(false) }
