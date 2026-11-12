@@ -183,7 +183,8 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
         if (textFor != "${cur.book.key}:${cur.n}") text = null      // keep the old text while only re-reading the voiced version
         textFor = "${cur.book.key}:${cur.n}"
         error = null
-        runCatching { app.repo.chapterText(cur.book, cur.n) }.onSuccess { text = it }.onFailure { error = "Глава не скачана, а интернета нет" }
+        runCatching { app.repo.chapterText(cur.book, cur.n) }.onSuccess { text = it }.onFailure { e -> android.util.Log.w("Reader", "chapter ${cur.book.key}/${cur.n}", e)
+            error = if (e is io.github.notoboto.unison.sources.PluginException) errorText(e) else "Глава не скачана, а интернета нет" }
     }
 
     // keep the screen on while a chapter is open (reading or listening)
