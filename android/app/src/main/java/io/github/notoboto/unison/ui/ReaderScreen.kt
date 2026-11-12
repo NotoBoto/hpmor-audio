@@ -201,7 +201,10 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
     }
 
     var sleepSheet by remember { mutableStateOf(false) }
-    val zones = Zones(s.tapZones, s.tapZoneWidth) { dir -> player.skip(if (dir < 0) -s.skipBack else s.skipForward) }
+    // a chapter without audio (text not voiced yet) has nothing to skip or follow: no skip zones, no «К текущему месту»
+    val hasAudio = np?.let { voicedTag != null || player.hasAudio(it.book, it.n) } ?: false
+    val zones = if (hasAudio) Zones(s.tapZones, s.tapZoneWidth) { dir -> player.skip(if (dir < 0) -s.skipBack else s.skipForward) }
+        else Zones("off", s.tapZoneWidth) { }
     var bmMenu by remember { mutableStateOf(false) }
     var speedMenu by remember { mutableStateOf(false) }
     var readingSheet by remember { mutableStateOf(false) }
@@ -249,7 +252,7 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
             error != null -> EmptyState("📡", error!!)
             t == null -> EmptyState("⏳", "Загружаю главу…")
             playerMode || t.paras.size <= 1 -> PlayerMode(t, np?.book?.coverUrl, pos, look, zones, onToggleUi = { immersive = !immersive })
-            else -> TextMode(t, pos, look, immersive, if (immersive || readOnly) 0.dp else barH, zones, focusRole, { focusRole = it }, readOnly, { visibleTime = it },
+            else -> TextMode(t, pos, look, immersive, if (immersive || readOnly) 0.dp else barH, zones, focusRole, { focusRole = it }, readOnly, { visibleTime = it }, hasAudio = hasAudio,
                 onTapEmpty = { immersive = !immersive }, onSeek = { player.seekTo(it); player.play() }, onLong = { wordMenu = it },
                 marks = np?.let { st.highlights[it.book.key] }.orEmpty(), pics = pics, onPicture = { bigPic = it })
         }
@@ -491,7 +494,7 @@ private fun buildPara(toks: List<Tok>, colors: List<Color>, active: Int, look: L
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean, bottomInset: androidx.compose.ui.unit.Dp, zones: Zones, focusRole: Int, onFocus: (Int) -> Unit,
-                     readOnly: Boolean, onVisible: (Double) -> Unit, onTapEmpty: () -> Unit, onSeek: (Double) -> Unit,
+                     readOnly: Boolean, onVisible: (Double) -> Unit, hasAudio: Boolean = true, onTapEmpty: () -> Unit, onSeek: (Double) -> Unit,
                      onLong: (WordHit) -> Unit, marks: List<io.github.notoboto.unison.data.Highlight> = emptyList(),
                      pics: Map<Int, List<Pair<String, ChapterImage>>> = emptyMap(), onPicture: (Pair<String, ChapterImage>) -> Unit = {}) {
     val colors = if (look.lightBg) roleColorsLight else roleColorsDark
@@ -610,7 +613,7 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
     }
     // "back to current place" chip while the user scrolls away
     Box(Modifier.fillMaxSize()) {
-        if (!readOnly && System.currentTimeMillis() < userScrollUntil && !immersive) {
+        if (!readOnly && hasAudio && System.currentTimeMillis() < userScrollUntil && !immersive) {
             Button(onClick = { userScrollUntil = 0; scope.launch { lazy.animateScrollToItem(itemOf(activePara)) } },
                 Modifier.align(Alignment.BottomCenter).padding(bottom = bottomInset + 12.dp)) { Text("↧ К текущему месту") }
         }

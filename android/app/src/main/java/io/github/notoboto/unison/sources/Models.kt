@@ -53,6 +53,13 @@ data class PluginInfo(
 
 @Serializable data class BookStub(val id: String, val title: String, val cover: String? = null, val author: String? = null, val nsfw: Boolean = false)
 
+/** One filter of a source (§19.4). Values: select/sort/text → string ("-id" = descending for sort), multiselect → list, toggle → bool. */
+@Serializable data class FilterOption(val id: String, val title: String)
+@Serializable data class SourceFilter(
+    val id: String, val title: String, val type: String,
+    val options: List<FilterOption> = emptyList(), val default: kotlinx.serialization.json.JsonElement? = null,
+)
+
 @Serializable data class BookPage(val items: List<BookStub>, val hasNext: Boolean = false)
 
 @Serializable data class BookDetails(

@@ -73,6 +73,10 @@ class PluginRuntimeTest {
     @Test fun goldenRanobelibBranchesAndAdult() = runCase("ranobelib-branches-adult", "ranobelib")
     @Test fun goldenRanobelibProsemirror() = runCase("ranobelib-prosemirror", "ranobelib")
     @Test fun goldenRanobelibCatalog() = runCase("ranobelib-catalog", "ranobelib")
+    @Test fun goldenAuthorTodayPaidAndFree() = runCase("authortoday-paid-and-free", "authortoday")
+    @Test fun goldenAuthorTodayCatalog() = runCase("authortoday-catalog", "authortoday")
+    @Test fun goldenAuthorTodayStory() = runCase("authortoday-story", "authortoday")
+    @Test fun goldenAuthorTodaySearch() = runCase("authortoday-search", "authortoday")
 
     @Test fun javascriptTimeoutIsEnforced() = runBlocking<Unit> {
         val code = """globalThis.__unison = { manifest: ${minimalManifest()}, core: { version: "t" },

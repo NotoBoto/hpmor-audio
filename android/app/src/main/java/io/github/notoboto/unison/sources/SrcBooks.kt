@@ -90,7 +90,13 @@ class SrcBooks(private val context: Context, private val sources: Sources) : io.
      * Makes sure the text of chapter [n] is on the phone (tNNN.json); fetches it through the plugin if needed.
      * With [refetch], downloads again and marks the chapter as changed when its hash differs (decision 19).
      */
-    suspend fun ensureText(pluginId: String, internalId: String, n: Int, refetch: Boolean = false): LocalChapter {
+    suspend fun ensureText(pluginId: String, internalId: String, n: Int, refetch: Boolean = false): LocalChapter =
+        // the reader, voicing and «download ahead» may ask for the same chapter at once: one fetch, the others wait for it
+        textLocks.getOrPut("$pluginId/$internalId/$n") { kotlinx.coroutines.sync.Mutex() }.withLock { fetchText(pluginId, internalId, n, refetch) }
+
+    private val textLocks = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
+
+    private suspend fun fetchText(pluginId: String, internalId: String, n: Int, refetch: Boolean): LocalChapter {
         val src = pluginSourceUrl(pluginId)
         if (!refetch && TextBooks.hasText(context, src, internalId, n)) return TextBooks.chapterParas(context, src, internalId, n)
         val o = origin(pluginId, internalId) ?: throw PluginException("NOT_FOUND", "book is not on the phone")
@@ -100,16 +106,35 @@ class SrcBooks(private val context: Context, private val sources: Sources) : io.
         if (c.kind != "text") throw PluginException("CHANGED_LAYOUT", "audio chapters are not supported yet")
         val text = LocalChapter(c.title.ifBlank { e.title }, c.paras)
         val hash = chapterHash(text.title, text.paras)
+        val pictures = downloadPictures(pluginId, internalId, n, c.images)
         lock.withLock {
             withContext(Dispatchers.IO) {
                 TextBooks.saveParas(context, src, internalId, n, text)
                 updateEntry(pluginId, internalId, n) { it.copy(hash = hash, textChanged = it.textChanged || (it.hash != null && it.hash != hash)) }
-                // a better duration estimate once the text is known (same rule as imported books)
+                // a better duration estimate once the text is known (same rule as imported books), and the pictures
                 val idx = TextBooks.chapters(context, src, internalId)
-                TextBooks.saveIndex(context, src, internalId, idx.map { if (it.n == n) it.copy(duration = text.paras.sumOf { p -> p.length } / 14.0) else it })
+                TextBooks.saveIndex(context, src, internalId, idx.map {
+                    if (it.n == n) it.copy(duration = text.paras.sumOf { p -> p.length } / 14.0, images = pictures) else it
+                })
             }
         }
         return text
+    }
+
+    /**
+     * Pictures of a chapter, downloaded next to its text by the host (sites often refuse them without their Referer).
+     * The plugin's `after` (-1 = before the first paragraph) becomes the reader's (0 = the title). Failed ones are left out.
+     */
+    private suspend fun downloadPictures(pluginId: String, internalId: String, n: Int, images: List<io.github.notoboto.unison.sources.ChapterImage>): List<io.github.notoboto.unison.data.ChapterImage> {
+        if (images.isEmpty()) return emptyList()
+        val plugin = sources.repos.installed()[pluginId]?.info ?: return emptyList()
+        val dir = TextBooks.dir(context, pluginSourceUrl(pluginId), internalId)
+        return images.mapIndexedNotNull { i, im ->
+            val ext = im.src.substringBefore('?').substringAfterLast('.', "jpg").lowercase().takeIf { it.length in 3..4 } ?: "jpg"
+            val f = File(dir, "img_%03d_%02d.%s".format(n, i, ext))
+            if (!f.exists() && !sources.io.download(plugin, im.src, f)) return@mapIndexedNotNull null
+            io.github.notoboto.unison.data.ChapterImage(after = im.after + 1, src = android.net.Uri.fromFile(f).toString(), w = im.w ?: 0, h = im.h ?: 0)
+        }
     }
 
     /** Downloads the chapter text again; true when it differs from the text on the phone (decision 19). */
@@ -160,7 +185,8 @@ class SrcBooks(private val context: Context, private val sources: Sources) : io.
         val oldIdx = TextBooks.chapters(context, src, id).associateBy { it.n }
         val idx = all.filter { it.state == "listed" || TextBooks.hasText(context, src, id, it.n) }.map { e ->
             val title = if (e.state == "removed") "${e.title} (удалена из источника)" else e.title + if (e.locked) " 🔒" else ""
-            ChapterMeta(e.n, title, oldIdx[e.n]?.duration ?: 0.0, 0, null, e.date)
+            // keep what the phone knows about the chapter (length, voicing, pictures); only the site's title and date change
+            oldIdx[e.n]?.copy(title = title, date = e.date) ?: ChapterMeta(e.n, title, 0.0, 0, null, e.date)
         }
         TextBooks.saveIndex(context, src, id, idx)
         return RefreshResult(added, removed)

@@ -53,7 +53,8 @@ class HttpHostIo(
                 http.newCall(req).execute().use { resp ->
                     if (auth != null && auth.usesCookies(plugin)) auth.storeCookies(resp.request.url.toString(), resp.headers("Set-Cookie"))
                     val text = resp.body?.string() ?: ""     // charset from Content-Type: plugins always get a string
-                    val h = buildMap { for (name in KEPT_HEADERS) resp.header(name)?.let { put(name.lowercase(), it) } }
+                    // every response header except cookies (a plugin may ask for its own, e.g. Author.Today's Reader-Secret, §5.3)
+                    val h = buildMap { for (name in resp.headers.names()) if (!name.equals("Set-Cookie", true)) put(name.lowercase(), resp.headers(name).joinToString(", ")) }
                     Triple(resp.code, h, FetchResult(resp.code, h, text, resp.request.url.toString()))
                 }
             }
@@ -70,6 +71,29 @@ class HttpHostIo(
                 }
                 else -> return result
             }
+        }
+    }
+
+    /**
+     * Downloads a picture of a chapter for the host (not for the plugin): same domains, rate limit, login and browser
+     * state as the plugin's requests, plus the site as Referer (RanobeLib answers 403 without it). False on failure.
+     */
+    suspend fun download(plugin: PluginInfo, url: String, to: File): Boolean {
+        if (!hostAllowed(url, plugin.domains)) return false
+        val hostHeaders = runCatching { auth?.headersFor(plugin, url) }.getOrNull() ?: emptyMap()
+        buckets.getOrPut(plugin.id) { Bucket(plugin.rateLimit) }.take()
+        val req = Request.Builder().url(url).header("User-Agent", USER_AGENT).header("Referer", plugin.site.trimEnd('/') + "/")
+            .apply { hostHeaders.forEach { (k, v) -> header(k, v) } }.build()
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                http.newCall(req).execute().use { r ->
+                    if (!r.isSuccessful || r.header("Content-Type")?.startsWith("image/") != true) return@use false
+                    to.parentFile?.mkdirs()
+                    val tmp = File.createTempFile(to.name, ".part", to.parentFile)
+                    r.body!!.byteStream().use { inp -> tmp.outputStream().use { inp.copyTo(it) } }
+                    (tmp.renameTo(to) || (to.delete() && tmp.renameTo(to))).also { if (!it) tmp.delete() }
+                }
+            }.getOrDefault(false)
         }
     }
 
@@ -126,7 +150,6 @@ class HttpHostIo(
     companion object {
         val USER_AGENT = "Unison/${BuildConfig.VERSION_NAME} (https://github.com/NotoBoto/unison)"
         private const val STORAGE_LIMIT = 1024 * 1024
-        private val KEPT_HEADERS = listOf("Content-Type", "Retry-After", "Cf-Mitigated", "Location", "Last-Modified", "ETag")
         private val MAINTENANCE = Regex("down for maintenance|maintenance mode|на техническом обслуживании", RegexOption.IGNORE_CASE)
 
         fun hostAllowed(url: String, domains: List<String>): Boolean {

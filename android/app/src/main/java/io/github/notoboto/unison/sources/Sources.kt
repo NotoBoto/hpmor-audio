@@ -29,8 +29,11 @@ class Sources(context: Context, http: OkHttpClient) {
     }
 
     /** Typed calls (§5.2). */
-    suspend fun search(id: String, query: String, page: Int) = decode(BookPage.serializer(), call(id, "search", query, page))
-    suspend fun popular(id: String, page: Int) = decode(BookPage.serializer(), call(id, "popular", page))
+    suspend fun search(id: String, query: String, page: Int, filters: JsonElement? = null) =
+        decode(BookPage.serializer(), if (filters == null) call(id, "search", query, page) else call(id, "search", query, page, filters))
+    suspend fun popular(id: String, page: Int, filters: JsonElement? = null) =
+        decode(BookPage.serializer(), if (filters == null) call(id, "popular", page) else call(id, "popular", page, filters))
+    suspend fun filters(id: String) = decode(kotlinx.serialization.builtins.ListSerializer(SourceFilter.serializer()), call(id, "filters"))
     suspend fun latest(id: String, page: Int) = decode(BookPage.serializer(), call(id, "latest", page))
     suspend fun details(id: String, bookId: String) = decode(BookDetails.serializer(), call(id, "details", bookId))
     suspend fun chapters(id: String, bookId: String) = decode(kotlinx.serialization.builtins.ListSerializer(ChapterStub.serializer()), call(id, "chapters", bookId))

@@ -183,7 +183,7 @@ class Repo(private val context: Context, private val store: Store) {
     /** Save the pictures of a downloaded chapter that are not on the phone yet (published after the download).
      *  Returns how many were added. */
     suspend fun fillPictures(b: Book, n: Int): Int = withContext(Dispatchers.IO) {
-        if (!store.isDownloaded(b.key, n)) return@withContext 0
+        if (!store.isDownloaded(b.key, n) || isTextSource(b.source.url)) return@withContext 0     // text books keep their pictures already
         var added = 0
         for (im in b.images(n)) {
             if (runCatching { files.hasFile(b.key, im.localName) }.getOrDefault(true)) continue

@@ -1,5 +1,10 @@
 package io.github.notoboto.unison.ui
 
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
@@ -240,6 +245,11 @@ fun SourceScreen(nav: NavController, pluginId: String) {
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Throwable?>(null) }
     val scope = rememberCoroutineScope()
+    // filters (§19.4): asked from the plugin once, applied to «Популярное» and «Поиск»
+    val hasFilters = "filters" in p.features
+    var filterDefs by remember { mutableStateOf<List<io.github.notoboto.unison.sources.SourceFilter>?>(null) }
+    var filterValues by remember { mutableStateOf<kotlinx.serialization.json.JsonObject?>(null) }
+    var filterSheet by remember { mutableStateOf(false) }
     val authChanges by app.sources.auth.changes.collectAsState()
     val loggedIn = remember(authChanges) { app.sources.auth.loggedIn(p) }
 
@@ -251,9 +261,9 @@ fun SourceScreen(nav: NavController, pluginId: String) {
             val next = page + 1
             runCatching {
                 when (tab) {
-                    "popular" -> app.sources.popular(p.id, next)
+                    "popular" -> app.sources.popular(p.id, next, filterValues)
                     "latest" -> app.sources.latest(p.id, next)
-                    else -> app.sources.search(p.id, submitted, next)
+                    else -> app.sources.search(p.id, submitted, next, filterValues)
                 }
             }.onSuccess { r ->
                 items += r.items.filter { st.settings.showNsfw || !it.nsfw }.filter { n -> items.none { it.id == n.id } }
@@ -263,10 +273,21 @@ fun SourceScreen(nav: NavController, pluginId: String) {
         }
     }
     fun reset() { items.clear(); page = 0; hasNext = true; error = null; loadMore() }
-    LaunchedEffect(tab, submitted, authChanges) { reset() }
+    LaunchedEffect(tab, submitted, authChanges, filterValues) { reset() }
 
+    if (filterSheet) filterDefs?.let { defs ->
+        FilterSheet(defs, filterValues, onApply = { v -> filterValues = v; filterSheet = false }, onDismiss = { filterSheet = false })
+    }
     Scaffold(topBar = {
         BackBar(nav, p.name) {
+            if (hasFilters && tab != "latest") IconButton(onClick = {
+                filterSheet = true
+                if (filterDefs == null) scope.launch { runCatching { app.sources.filters(p.id) }.onSuccess { filterDefs = it }.onFailure { error = it; filterSheet = false } }
+            }) {
+                androidx.compose.material3.BadgedBox(badge = { if (filterValues != null) androidx.compose.material3.Badge() }) {
+                    Icon(Icons.Filled.FilterList, "Фильтры")
+                }
+            }
             if (p.login != null) TextButton(onClick = { if (loggedIn) sourceLogout(nav.context, p) else nav.navigate(loginRoute(p.id)) }) {
                 Text(if (loggedIn) "Выйти" else "Войти")
             }
@@ -451,6 +472,73 @@ fun PluginBookScreen(nav: NavController, pluginId: String, bookId: String) {
                             modifier = Modifier.clickable { nav.context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(c.url))) })
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Filters of a source (§19.4) in a bottom sheet. «Сбросить» returns to the plugin's defaults (no filters sent). */
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun FilterSheet(
+    defs: List<io.github.notoboto.unison.sources.SourceFilter>, current: kotlinx.serialization.json.JsonObject?,
+    onApply: (kotlinx.serialization.json.JsonObject?) -> Unit, onDismiss: () -> Unit,
+) {
+    fun initial(f: io.github.notoboto.unison.sources.SourceFilter) = current?.get(f.id) ?: f.default
+    val values = remember { mutableStateMapOf<String, kotlinx.serialization.json.JsonElement>().apply {
+        defs.forEach { f -> initial(f)?.let { put(f.id, it) } }
+    } }
+    fun str(id: String) = (values[id] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+    fun list(id: String) = (values[id] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull }.orEmpty()
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp)
+            .heightIn(max = 600.dp).verticalScroll(rememberScrollState())) {
+            Text("Фильтры", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+            for (f in defs) {
+                Spacer(Modifier.height(14.dp))
+                if (f.type != "toggle") Text(f.title, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(6.dp))
+                when (f.type) {
+                    "toggle" -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(f.title, Modifier.weight(1f))
+                        Switch((values[f.id] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull ?: false,
+                            { values[f.id] = kotlinx.serialization.json.JsonPrimitive(it) })
+                    }
+                    "text" -> OutlinedTextField(str(f.id).orEmpty(), { values[f.id] = kotlinx.serialization.json.JsonPrimitive(it) },
+                        Modifier.fillMaxWidth(), singleLine = true)
+                    "sort" -> {
+                        val v = str(f.id).orEmpty(); val desc = v.startsWith("-"); val sel = v.removePrefix("-")
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            f.options.forEach { o ->
+                                androidx.compose.material3.FilterChip(sel == o.id, onClick = {
+                                    // the same option again flips the direction
+                                    values[f.id] = kotlinx.serialization.json.JsonPrimitive(if (sel == o.id) (if (desc) o.id else "-" + o.id) else "-" + o.id)
+                                }, label = { Text(o.title + if (sel == o.id) (if (desc) " ↓" else " ↑") else "") })
+                            }
+                        }
+                    }
+                    "select" -> androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        f.options.forEach { o ->
+                            androidx.compose.material3.FilterChip(str(f.id) == o.id, onClick = {
+                                if (str(f.id) == o.id) values.remove(f.id) else values[f.id] = kotlinx.serialization.json.JsonPrimitive(o.id)
+                            }, label = { Text(o.title) })
+                        }
+                    }
+                    "multiselect" -> androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val chosen = list(f.id)
+                        f.options.forEach { o ->
+                            androidx.compose.material3.FilterChip(o.id in chosen, onClick = {
+                                val next = if (o.id in chosen) chosen - o.id else chosen + o.id
+                                values[f.id] = kotlinx.serialization.json.JsonArray(next.map { kotlinx.serialization.json.JsonPrimitive(it) })
+                            }, label = { Text(o.title) })
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onApply(null) }, Modifier.weight(1f)) { Text("Сбросить") }
+                Button(onClick = { onApply(kotlinx.serialization.json.JsonObject(values.toMap())) }, Modifier.weight(1f)) { Text("Применить") }
             }
         }
     }
