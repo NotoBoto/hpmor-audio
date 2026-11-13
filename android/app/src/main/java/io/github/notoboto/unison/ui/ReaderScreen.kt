@@ -117,6 +117,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -247,7 +248,7 @@ fun ReaderScreen(nav: NavController, key: String, n: Int) {
         when {
             error != null -> EmptyState("📡", error!!)
             t == null -> EmptyState("⏳", "Загружаю главу…")
-            playerMode || t.paras.size <= 1 -> PlayerMode(t, np?.book?.coverUrl, pos, look, zones, onToggleUi = { immersive = !immersive })
+            playerMode || t.paras.size <= 1 -> PlayerMode(t, np?.book?.coverUrl, pos, look, zones, if (barH > 0.dp) barH else 250.dp, onToggleUi = { immersive = !immersive })
             else -> TextMode(t, pos, look, immersive, if (immersive || readOnly) 0.dp else barH, zones, focusRole, { focusRole = it }, readOnly, { visibleTime = it },
                 onTapEmpty = { immersive = !immersive }, onSeek = { player.seekTo(it); player.play() }, onLong = { wordMenu = it },
                 marks = np?.let { st.highlights[it.book.key] }.orEmpty(), pics = pics, onPicture = { bigPic = it })
@@ -484,7 +485,7 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
     val headerItems = 2   // title + legend
     fun itemOf(pi: Int) = if (pi <= 0) 0 else pi - 1 + headerItems
     // in "read only" mode the screen edges turn pages instead of skipping audio
-    val activeZones = if (readOnly) Zones("single", 25) { dir -> scope.launch { lazy.animateScrollBy(dir * viewport * 0.82f) } } else zones
+    val activeZones = if (readOnly) Zones("single", 25) { dir -> scope.launch { lazy.glideBy(dir * viewport * 0.82f) } } else zones
 
     LaunchedEffect(lazy.isScrollInProgress) { if (lazy.isScrollInProgress && !programmatic) userScrollUntil = System.currentTimeMillis() + 8000 }
     LaunchedEffect(lazy.firstVisibleItemIndex) {
@@ -511,16 +512,14 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
             // keep the spoken line in the middle of the text area: glide by the difference whenever the line changes
             val target = (topBound + bottomBound - lineH) / 2
             if (lineY != null && kotlin.math.abs(lineY - target) < lineH / 2) return@LaunchedEffect
-            programmatic = true
-            if (lineY != null) lazy.animateScrollBy(lineY - target) else lazy.animateScrollToItem(itemOf(activePara), (pad + lineTop - target).toInt())
-            programmatic = false
+            if (lineY != null) lazy.glideBy(lineY - target)
+            else { programmatic = true; lazy.animateScrollToItem(itemOf(activePara), (pad + lineTop - target).toInt()); programmatic = false }
             return@LaunchedEffect
         }
         // jump once only N readable lines (half-visible counts) are left below
         if (lineY != null && lineY >= topBound && lineY + lineH <= bottomBound - margin - (if (followBottom > 0) lineH / 2 else 0f)) return@LaunchedEffect
-        programmatic = true
-        lazy.animateScrollToItem(itemOf(activePara), (pad + lineTop - topBound - followTop * lineH).toInt())
-        programmatic = false
+        if (lineY != null) lazy.glideBy(lineY - topBound - followTop * lineH)
+        else { programmatic = true; lazy.animateScrollToItem(itemOf(activePara), (pad + lineTop - topBound - followTop * lineH).toInt()); programmatic = false }
     }
 
     val fs = look.fs
@@ -548,21 +547,26 @@ private fun TextMode(t: ChapterText, pos: Double, look: Look, immersive: Boolean
             val act = if (pi == activePara && !readOnly) activeTok else -1
             val pm = marks.filter { it.n == t.n && it.p == pi }
             val pt = remember(t, pi, act, colors, look, focusRole, pm) { buildPara(toks, colors, act, look, focusRole, pm) }
+            // the gesture handler below must survive the spoken word moving on (several times a second): restarting it
+            // drops a tap in progress, so it reads the current paragraph through this instead of being keyed on it
+            val cur by rememberUpdatedState(pt to toks)
             fun tokAt(off: androidx.compose.ui.geometry.Offset): Int {
                 val lay = layouts[pi] ?: return -1
                 val ch = lay.getOffsetForPosition(off)
-                return pt.starts.indexOfLast { it <= ch }
+                return cur.first.starts.indexOfLast { it <= ch }
             }
             // the pictures go inside the paragraph's item, under its text: item indices stay "title, legend, paragraphs",
             // so following the spoken word, search jumps and bookmarks keep their places
             Column(Modifier.widthIn(max = 720.dp)) {
             Text(pt.text, Modifier.widthIn(max = 720.dp).padding(bottom = (fs * 0.7).dp)
-                .pointerInput(pt, activeZones) {
+                .pointerInput(t, activeZones, readOnly) {
                     activeZones.detect(this, onTap = { onTapEmpty() }, onDoubleTap = if (readOnly) null else { off ->
+                        val toks = cur.second
                         var k = tokAt(off)
                         while (k >= 0 && toks[k].t == null) k--
                         toks.getOrNull(k)?.t?.let(onSeek)
                     }, onLong = { off ->
+                        val toks = cur.second
                         val k = tokAt(off)
                         if (k >= 0) {
                             var a = k; while (a > 0 && !sentenceEnd(toks[a - 1].word)) a--
@@ -637,31 +641,64 @@ private fun buildParaStart(t: ChapterText, pi: Int, tok: Int): Int {
 }
 
 @Composable
-private fun PlayerMode(t: ChapterText, cover: String?, pos: Double, look: Look, zones: Zones, onToggleUi: () -> Unit) {
+private fun PlayerMode(t: ChapterText, cover: String?, pos: Double, look: Look, zones: Zones, bottomInset: androidx.compose.ui.unit.Dp, onToggleUi: () -> Unit) {
     val colors = if (LocalIsDark.current) roleColorsDark else roleColorsLight
     val wi = t.wordAt(pos)
     val pi = if (wi >= 0) t.timeline[wi].second else 1
     val ti = if (wi >= 0) t.timeline[wi].third else -1
     val para = t.paras.getOrNull(pi).orEmpty()
     val role = para.getOrNull(ti.coerceAtLeast(0))?.role ?: 0
-    Column(Modifier.fillMaxSize().statusBarsPadding().padding(top = 72.dp, bottom = 250.dp, start = 24.dp, end = 24.dp)
-        .pointerInput(zones) { zones.detect(this, onTap = { onToggleUi() }) },
+    // the whole screen takes the tap, padding included: with the panels hidden the lower part is empty space to tap on
+    Column(Modifier.fillMaxSize().pointerInput(zones) { zones.detect(this, onTap = { onToggleUi() }) }
+        .statusBarsPadding().padding(top = 72.dp, bottom = bottomInset + 12.dp, start = 24.dp, end = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Cover(cover, Modifier.fillMaxWidth(0.62f).aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp)))
+        // the cover takes what the text below leaves, so the sentence is never squeezed to a cut-off line;
+        // every part below has a fixed height, so nothing jumps as the sentences and the speakers change
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            val w = minOf(maxWidth * 0.62f, maxHeight * (2f / 3f))
+            Cover(cover, Modifier.size(w, w * 1.5f).clip(RoundedCornerShape(14.dp)))
+        }
         Spacer(Modifier.height(18.dp))
         Text(t.title, fontWeight = FontWeight.SemiBold, fontSize = 18.sp, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(6.dp))
-        if (role > 0) Text(t.roles.getOrNull(role) ?: "", color = colors[(role - 1) % colors.size], fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(if (role > 0) t.roles.getOrNull(role) ?: " " else " ", color = if (role > 0) colors[(role - 1) % colors.size] else Color.Unspecified,
+            fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
         Spacer(Modifier.height(10.dp))
-        // only the sentence being spoken
+        // only the sentence being spoken: room for four lines, a longer one scrolls along with the voice
         val a = ti.coerceAtLeast(0)
         var from = a; while (from > 0 && !sentenceEnd(para[from - 1].word)) from--
         var to = a; while (to < para.size - 1 && !sentenceEnd(para[to].word)) to++
         val sentence = if (para.isEmpty()) emptyList() else para.subList(from, (to + 1).coerceAtMost(para.size))
         val pt = remember(t, pi, from, ti, colors, look) { buildPara(sentence, colors, ti - from, look.copy(sentence = false)) }
-        Box(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), contentAlignment = Alignment.TopCenter) {
-            Text(pt.text, fontSize = 19.sp, lineHeight = 28.sp, textAlign = TextAlign.Center, fontFamily = look.family, modifier = Modifier.fillMaxWidth())
+        val scroll = rememberScrollState()
+        var lay by remember { mutableStateOf<TextLayoutResult?>(null) }
+        val lineH = with(LocalDensity.current) { 28.sp.toPx() }
+        LaunchedEffect(pt, lay) {
+            val l = lay ?: return@LaunchedEffect
+            val k = ti - from
+            // keep the spoken word on the second line of the box (the first while the sentence starts)
+            val target = if (k <= 0) 0f else (l.getLineTop(l.getLineForOffset(pt.starts.getOrElse(k) { 0 })) - lineH).coerceAtLeast(0f)
+            val by = target.coerceAtMost(scroll.maxValue.toFloat()) - scroll.value
+            if (kotlin.math.abs(by) >= 1f) scroll.glideBy(by)
         }
+        Box(Modifier.height(with(LocalDensity.current) { (28.sp * 4).toDp() } + 12.dp).fillMaxWidth().verticalScroll(scroll), contentAlignment = Alignment.TopCenter) {
+            Text(pt.text, fontSize = 19.sp, lineHeight = 28.sp, textAlign = TextAlign.Center, fontFamily = look.family, modifier = Modifier.fillMaxWidth(),
+                onTextLayout = { lay = it })
+        }
+    }
+}
+
+/**
+ * Animated scroll that does not count as "scrolling" for the list: during animateScrollBy a touch is taken to stop
+ * the scroll and never reaches the tap handlers, so with the text gliding after the voice taps got lost.
+ * Gives way the moment the user drags the list themselves.
+ */
+private suspend fun androidx.compose.foundation.gestures.ScrollableState.glideBy(px: Float) {
+    if (px == 0f) return
+    var done = 0f
+    androidx.compose.animation.core.animate(0f, px, animationSpec = androidx.compose.animation.core.spring()) { v, _ ->
+        if (isScrollInProgress) throw kotlinx.coroutines.CancellationException("the user scrolls")
+        dispatchRawDelta(v - done); done = v
     }
 }
 
