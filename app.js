@@ -947,12 +947,13 @@ function importSync(f) {
   const st = { books: 0, progress: 0, bookmarks: 0, history: 0, categories: 0 }, site = SITE();
   const foreign = LS.get('syncForeign', { books: {}, history: [] });
   const cats0 = getCats(); let cats = unionNames(cats0, f.categories);
+  const extra = LS.get('syncExtra', {});   // read once, written once after the loop
   for (const [k, e] of Object.entries(f.books || {})) {
     const p = splitKey(k); if (!p || !e) continue;
     st.books++;
     if (p[0] === site) {
       const m = mergeEntry(toEntry(p[1]), e, st); fromEntry(p[1], m); cats = unionNames(cats, bs(p[1]).cats);
-      const ex = LS.get('syncExtra', {}); ex[p[1]] = extraOf(m, SYNC_ENTRY_KEYS); LS.set('syncExtra', ex);
+      extra[p[1]] = extraOf(m, SYNC_ENTRY_KEYS);
     }
     else foreign.books[k] = mergeEntry(foreign.books[k], e, st);
   }
@@ -968,7 +969,7 @@ function importSync(f) {
   saveHist();
   const days = LS.get('statsDays', {});
   for (const [d, ms] of Object.entries(f.statsDays || {})) if ((+ms || 0) > (days[d] || 0)) days[d] = +ms;
-  LS.set('statsDays', days); LS.set('syncForeign', foreign); LS.set('syncTop', { ...LS.get('syncTop', {}), ...extraOf(f, SYNC_TOP_KEYS) });
+  LS.set('statsDays', days); LS.set('syncForeign', foreign); LS.set('syncExtra', extra); LS.set('syncTop', { ...LS.get('syncTop', {}), ...extraOf(f, SYNC_TOP_KEYS) });
   cur = null;   // force the reader to reopen the chapter with the merged position
   return st;
 }

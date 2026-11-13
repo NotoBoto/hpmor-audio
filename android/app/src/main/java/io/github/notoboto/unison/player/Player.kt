@@ -370,7 +370,9 @@ class PlayerController(private val ctx: Context, private val app: UnisonApp, pri
     /** Whether chapter [n] has audio: web books always, text books only once voiced, imported audiobooks always. */
     fun hasAudio(b: Book, n: Int): Boolean =
         !io.github.notoboto.unison.data.isTextSource(b.source.url) || app.store.isDownloaded(b.key, n) ||
-            (b.source.url == io.github.notoboto.unison.data.LOCAL_URL && io.github.notoboto.unison.data.Local.isAudio(ctx, b.meta.id))
+            (b.source.url == io.github.notoboto.unison.data.LOCAL_URL &&
+                audioBooks.getOrPut(b.meta.id) { io.github.notoboto.unison.data.Local.isAudio(ctx, b.meta.id) })
+    private val audioBooks = java.util.concurrent.ConcurrentHashMap<String, Boolean>()   // imported audiobooks never turn into text
 
     /** Load a chapter; continue from saved position unless it was finished. */
     fun open(b: Book, n: Int, autoplay: Boolean) {

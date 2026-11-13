@@ -80,10 +80,10 @@ class SrcBooks(private val context: Context, private val sources: Sources) : io.
     }
 
     /** chapters() again: new chapters get the next n, gone ones are marked removed (§8.3, §8.6). */
-    suspend fun refresh(pluginId: String, internalId: String): RefreshResult = lock.withLock {
+    suspend fun refresh(pluginId: String, internalId: String): RefreshResult {
         val o = origin(pluginId, internalId) ?: throw PluginException("NOT_FOUND", "book is not on the phone")
-        val list = sources.chapters(pluginId, o.book)
-        withContext(Dispatchers.IO) { merge(pluginId, internalId, o.book, list) }
+        val list = sources.chapters(pluginId, o.book)     // the network, outside the lock: texts of other chapters keep loading
+        return lock.withLock { withContext(Dispatchers.IO) { merge(pluginId, internalId, o.book, list) } }
     }
 
     /**
@@ -160,7 +160,9 @@ class SrcBooks(private val context: Context, private val sources: Sources) : io.
 
     // ---- internals ----
 
-    private fun merge(pluginId: String, id: String, bookId: String, list: List<ChapterStub>): RefreshResult {
+    // chapters.json is rewritten by merge, updateEntry (under [lock]) and localN (sync import, not suspending):
+    // all three also hold this monitor, so their read-modify-writes never interleave
+    private fun merge(pluginId: String, id: String, bookId: String, list: List<ChapterStub>): RefreshResult = synchronized(this) {
         val src = pluginSourceUrl(pluginId)
         val old = table(pluginId, id)?.chapters.orEmpty()
         val byId = old.associateBy { it.id }
@@ -184,16 +186,17 @@ class SrcBooks(private val context: Context, private val sources: Sources) : io.
         // index.json in reading order; removed chapters stay only while they have text on the phone
         val oldIdx = TextBooks.chapters(context, src, id).associateBy { it.n }
         val idx = all.filter { it.state == "listed" || TextBooks.hasText(context, src, id, it.n) }.map { e ->
-            val title = if (e.state == "removed") "${e.title} (удалена из источника)" else e.title + if (e.locked) " 🔒" else ""
+            val title = (if (e.state == "removed") "${e.title} (удалена из источника)" else e.title + if (e.locked) " 🔒" else "") +
+                if (e.textChanged) CHANGED else ""        // «текст изменился» stays until the chapter is voiced again
             // keep what the phone knows about the chapter (length, voicing, pictures); only the site's title and date change
             oldIdx[e.n]?.copy(title = title, date = e.date) ?: ChapterMeta(e.n, title, 0.0, 0, null, e.date)
         }
         TextBooks.saveIndex(context, src, id, idx)
-        return RefreshResult(added, removed)
+        RefreshResult(added, removed)
     }
 
-    private fun updateEntry(pluginId: String, id: String, n: Int, f: (Entry) -> Entry) {
-        val t = table(pluginId, id) ?: return
+    private fun updateEntry(pluginId: String, id: String, n: Int, f: (Entry) -> Entry): Unit = synchronized(this) {
+        val t = table(pluginId, id) ?: return@synchronized
         TextBooks.atomicWrite(file(pluginId, id, "chapters.json"),
             json.encodeToString(Table.serializer(), t.copy(chapters = t.chapters.map { if (it.n == n) f(it) else it })))
     }

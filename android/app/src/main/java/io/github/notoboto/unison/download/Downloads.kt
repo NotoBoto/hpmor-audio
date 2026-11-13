@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.Request
@@ -65,22 +66,23 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
         return if (cur != null && v != cur && v != "1") DlState.Outdated else DlState.Done
     }
 
-    /** Chapters queued for voicing by «Озвучивать вперёд» ("bookKey:n"): a chapter the user asks for goes before them. */
-    private val bgVoice: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+    /** Chapters queued for voicing by «Озвучивать наперёд» ("bookKey:n", tag "bg"): a chapter the user asks for goes first. */
+    private val bgVoice: StateFlow<Set<String>> = wm.getWorkInfosByTagFlow(TAG)
+        .map { infos -> infos.filter { !it.state.isFinished && "bg" in it.tags }.mapNotNull { i -> i.tags.firstOrNull { it.startsWith("k:") }?.removePrefix("k:") }.toSet() }
+        .stateIn(scope, SharingStarted.Eagerly, emptySet())
 
     private fun enqueueTts(b: Book, n: Int, title: String, background: Boolean) {
         val s = app.store.s.settings
         val plugin = io.github.notoboto.unison.data.isPluginSource(b.source.url)
         val tr = OneTimeWorkRequestBuilder<TtsWorker>()
             .setInputData(workDataOf("key" to b.key, "id" to b.meta.id, "src" to b.source.url, "n" to n, "title" to title))
-            .addTag(TAG).addTag("k:${b.key}:$n")
+            .addTag(TAG).addTag("k:${b.key}:$n").apply { if (background) addTag("bg") }
             .setBackoffCriteria(androidx.work.BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS)
             .apply {
                 if (background || plugin) setConstraints(Constraints.Builder()
                     .setRequiredNetworkType(when { !plugin -> NetworkType.NOT_REQUIRED; background && s.voiceAheadWifi -> NetworkType.UNMETERED; else -> NetworkType.CONNECTED })
                     .setRequiresCharging(background && s.voiceAheadCharging).build())
             }.build()
-        if (background) bgVoice += "${b.key}:$n" else bgVoice -= "${b.key}:$n"
         wm.enqueueUniqueWork("tts:${b.key}", ExistingWorkPolicy.APPEND_OR_REPLACE, tr)   // one chapter at a time
     }
 
@@ -117,7 +119,7 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
         }
         for (n in requeue.filter { it !in ns }) {
             val ch = b.chapters.find { it.n == n } ?: continue
-            enqueueTts(b, n, "${b.shortTitle} — ${ch.title}", background = "${b.key}:$n" in bgVoice)
+            enqueueTts(b, n, "${b.shortTitle} — ${ch.title}", background = "${b.key}:$n" in bgVoice.value)
         }
         return added
     }
@@ -132,14 +134,15 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
     val textRev = kotlinx.coroutines.flow.MutableStateFlow(0)
     private val textQueue = kotlinx.coroutines.channels.Channel<Pair<Book, Int>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     private val textKnown = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    private val textMissing = java.util.concurrent.ConcurrentHashMap<String, Long>()   // book rows redraw often: no file check each time
 
     /** Whether the chapter's text is on the phone. Only «yes» is cached: the reader and voicing also fetch texts. */
-    fun hasText(b: Book, n: Int): Boolean = textKnown["${b.key}:$n"] ?: run {
+    fun hasText(b: Book, n: Int): Boolean = textKnown["${b.key}:$n"] ?: textMissing["${b.key}:$n"]?.takeIf { System.currentTimeMillis() - it < 5_000 }?.let { false } ?: run {
         when {
             b.source.url == io.github.notoboto.unison.data.LOCAL_URL -> true
             io.github.notoboto.unison.data.isPluginSource(b.source.url) -> io.github.notoboto.unison.data.TextBooks.hasText(ctx, b.source.url, b.meta.id, n)
             else -> runCatching { app.repo.files.exists(b.key, n, "json") }.getOrDefault(false)
-        }.also { if (it) textKnown["${b.key}:$n"] = true }
+        }.also { if (it) textKnown["${b.key}:$n"] = true else textMissing["${b.key}:$n"] = System.currentTimeMillis() }
     }
 
     fun textState(b: Book, n: Int, jobsMap: Map<String, DlState> = textJobs.value): DlState =
@@ -151,13 +154,13 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
         for (n in ns) {
             val k = "${b.key}:$n"
             if (textJobs.value.containsKey(k) || hasText(b, n)) continue
-            textJobs.value = textJobs.value + (k to DlState.Queued)
+            textJobs.update { it + (k to DlState.Queued) }
             textQueue.trySend(b to n); added++
         }
         return added
     }
 
-    fun cancelText(b: Book, n: Int) { textJobs.value = textJobs.value - "${b.key}:$n" }
+    fun cancelText(b: Book, n: Int) { textJobs.update { it - "${b.key}:$n" } }
 
     /** Deletes the text of chapters (not their audio: a voiced or downloaded chapter keeps its own copy). */
     fun deleteText(b: Book, ns: Collection<Int>) {
@@ -238,10 +241,10 @@ class Downloads(private val ctx: Context, private val app: UnisonApp, scope: Cor
             for ((b, n) in textQueue) {
                 val k = "${b.key}:$n"
                 if (!textJobs.value.containsKey(k)) continue          // cancelled while waiting
-                textJobs.value = textJobs.value + (k to DlState.Running(0f))
+                textJobs.update { it + (k to DlState.Running(0f)) }
                 val ok = runCatching { fetchText(b, n) }.onFailure { android.util.Log.w("Downloads", "text $k failed", it) }.isSuccess
-                textKnown.remove(k)
-                textJobs.value = textJobs.value - k
+                textKnown.remove(k); textMissing.remove(k)
+                textJobs.update { it - k }
                 if (!ok) synchronized(this@Downloads) { failCount++ }
             }
         }

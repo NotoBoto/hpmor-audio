@@ -33,13 +33,17 @@ class HttpHostIo(
     private val storageDir: File,
     private val auth: SourceAuth? = null,
 ) : HostIo {
-    private val http = http.newBuilder().followRedirects(true).build()
+    // Redirects are followed by hand: every hop must stay within the plugin's domains, and login cookies / token are
+    // computed for each hop's own URL (OkHttp would resend a hand-set Cookie header to whatever host a redirect names).
+    private val http = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
     private val buckets = ConcurrentHashMap<String, Bucket>()
     private val storageLocks = ConcurrentHashMap<String, Mutex>()
 
-    override suspend fun fetch(plugin: PluginInfo, url: String, method: String, headers: Map<String, String>, body: String?): FetchResult {
-        if (!hostAllowed(url, plugin.domains)) throw PluginException("ENGINE", "fetch to a domain outside ${plugin.domains}: $url")
+    override suspend fun fetch(plugin: PluginInfo, url0: String, method0: String, headers: Map<String, String>, body0: String?): FetchResult {
+        if (!hostAllowed(url0, plugin.domains)) throw PluginException("ENGINE", "fetch to a domain outside ${plugin.domains}: $url0")
+        var url = url0; var method = method0; var body = body0
         var attempt = 0
+        var hops = 0
         while (true) {
             val hostHeaders = (auth?.headersFor(plugin, url) ?: emptyMap()).let { h ->
                 // a plugin may pin a site preference with its own cookie (Author.Today: mobile-mode=false); it is merged
@@ -65,6 +69,15 @@ class HttpHostIo(
                 }
             }
             val (code, h, result) = r
+            if (code in REDIRECTS && h["location"] != null) {
+                val next = url.toHttpUrlOrNull()?.resolve(h["location"]!!)?.toString()
+                    ?: throw PluginException("CHANGED_LAYOUT", "bad redirect from $url", url)
+                if (++hops > 5) throw PluginException("CHANGED_LAYOUT", "too many redirects", url0)
+                if (!hostAllowed(next, plugin.domains)) throw PluginException("ENGINE", "redirect to a domain outside ${plugin.domains}: $next", url0)
+                if (code == 303 || ((code == 301 || code == 302) && !method.equals("GET", true) && !method.equals("HEAD", true))) { method = "GET"; body = null }
+                url = next
+                continue
+            }
             when {
                 code == 418 || (code == 503 && MAINTENANCE.containsMatchIn(result.text.take(4000))) ->
                     throw PluginException("UNAVAILABLE", "${plugin.name}: site is down for maintenance ($code)", url)
@@ -85,22 +98,32 @@ class HttpHostIo(
      * state as the plugin's requests, plus the site as Referer (RanobeLib answers 403 without it). False on failure.
      */
     suspend fun download(plugin: PluginInfo, url: String, to: File): Boolean {
-        if (!hostAllowed(url, plugin.domains)) return false
-        val hostHeaders = runCatching { auth?.headersFor(plugin, url) }.getOrNull() ?: emptyMap()
-        buckets.getOrPut(plugin.id) { Bucket(plugin.rateLimit) }.take()
-        val req = Request.Builder().url(url).header("User-Agent", USER_AGENT).header("Referer", plugin.site.trimEnd('/') + "/")
-            .apply { hostHeaders.forEach { (k, v) -> header(k, v) } }.build()
-        return withContext(Dispatchers.IO) {
-            runCatching {
-                http.newCall(req).execute().use { r ->
-                    if (!r.isSuccessful || r.header("Content-Type")?.startsWith("image/") != true) return@use false
-                    to.parentFile?.mkdirs()
-                    val tmp = File.createTempFile(to.name, ".part", to.parentFile)
-                    r.body!!.byteStream().use { inp -> tmp.outputStream().use { inp.copyTo(it) } }
-                    (tmp.renameTo(to) || (to.delete() && tmp.renameTo(to))).also { if (!it) tmp.delete() }
-                }
-            }.getOrDefault(false)
+        var cur = url
+        repeat(6) {
+            if (!hostAllowed(cur, plugin.domains)) return false
+            val hostHeaders = runCatching { auth?.headersFor(plugin, cur) }.getOrNull() ?: emptyMap()
+            buckets.getOrPut(plugin.id) { Bucket(plugin.rateLimit) }.take()
+            val req = Request.Builder().url(cur).header("User-Agent", USER_AGENT).header("Referer", plugin.site.trimEnd('/') + "/")
+                .apply { hostHeaders.forEach { (k, v) -> header(k, v) } }.build()
+            val next: String? = withContext(Dispatchers.IO) {
+                runCatching {
+                    http.newCall(req).execute().use { r ->
+                        if (r.code in REDIRECTS) return@use r.header("Location")?.let { req.url.resolve(it)?.toString() }
+                        if (!r.isSuccessful || r.header("Content-Type")?.startsWith("image/") != true) return@use null
+                        to.parentFile?.mkdirs()
+                        val tmp = File.createTempFile(to.name, ".part", to.parentFile)
+                        r.body!!.byteStream().use { inp -> tmp.outputStream().use { inp.copyTo(it) } }
+                        if (tmp.renameTo(to) || (to.delete() && tmp.renameTo(to))) "" else { tmp.delete(); null }
+                    }
+                }.getOrNull()
+            }
+            when {
+                next == null -> return false
+                next.isEmpty() -> return true      // saved
+                else -> cur = next                 // redirect: checked against the domains on the next round
+            }
         }
+        return false
     }
 
     override suspend fun storageGet(plugin: PluginInfo, key: String): JsonElement =
@@ -157,6 +180,8 @@ class HttpHostIo(
         val USER_AGENT = "Unison/${BuildConfig.VERSION_NAME} (https://github.com/NotoBoto/unison)"
         private const val STORAGE_LIMIT = 1024 * 1024
         private val MAINTENANCE = Regex("down for maintenance|maintenance mode|на техническом обслуживании", RegexOption.IGNORE_CASE)
+
+        private val REDIRECTS = setOf(301, 302, 303, 307, 308)
 
         /** "a=1; b=2" + "b=3" → "a=1; b=3". */
         fun mergeCookies(base: String, over: String): String {

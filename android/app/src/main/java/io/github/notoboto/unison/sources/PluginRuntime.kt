@@ -63,6 +63,9 @@ class PluginRuntime private constructor(
      */
     suspend fun call(fn: String, argsJson: String = "[]"): JsonElement = lock.withLock {
         val callId = callIds.incrementAndGet()
+        // requests and results left by a call that timed out or failed belong to nobody now
+        while (requests.tryReceive().isSuccess) { /* drop */ }
+        done.clear()
         try {
             withTimeout(limits.wallTimeMillis) {
                 eval("__unison.call($callId, ${jsString(fn)}, ${jsString(argsJson)})")
