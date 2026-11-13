@@ -41,7 +41,13 @@ class HttpHostIo(
         if (!hostAllowed(url, plugin.domains)) throw PluginException("ENGINE", "fetch to a domain outside ${plugin.domains}: $url")
         var attempt = 0
         while (true) {
-            val hostHeaders = auth?.headersFor(plugin, url) ?: emptyMap()
+            val hostHeaders = (auth?.headersFor(plugin, url) ?: emptyMap()).let { h ->
+                // a plugin may pin a site preference with its own cookie (Author.Today: mobile-mode=false); it is merged
+                // into the login cookies, the plugin's value winning
+                val own = headers.entries.firstOrNull { it.key.equals("Cookie", true) }?.value
+                val host = h["Cookie"]
+                if (own != null && host != null) h + ("Cookie" to mergeCookies(host, own)) else h
+            }
             buckets.getOrPut(plugin.id) { Bucket(plugin.rateLimit) }.take()
             val req = Request.Builder().url(url)
                 .header("User-Agent", USER_AGENT)
@@ -151,6 +157,16 @@ class HttpHostIo(
         val USER_AGENT = "Unison/${BuildConfig.VERSION_NAME} (https://github.com/NotoBoto/unison)"
         private const val STORAGE_LIMIT = 1024 * 1024
         private val MAINTENANCE = Regex("down for maintenance|maintenance mode|на техническом обслуживании", RegexOption.IGNORE_CASE)
+
+        /** "a=1; b=2" + "b=3" → "a=1; b=3". */
+        fun mergeCookies(base: String, over: String): String {
+            val m = LinkedHashMap<String, String>()
+            for (part in (base.split(';') + over.split(';'))) {
+                val p = part.trim(); if (p.isEmpty()) continue
+                m[p.substringBefore('=').trim()] = p
+            }
+            return m.values.joinToString("; ")
+        }
 
         fun hostAllowed(url: String, domains: List<String>): Boolean {
             val host = url.toHttpUrlOrNull()?.host ?: return false

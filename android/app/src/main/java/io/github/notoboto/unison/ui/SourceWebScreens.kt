@@ -54,10 +54,14 @@ fun browserRoute(pluginId: String, url: String) = "srcweb/$pluginId?url=${Uri.en
 @SuppressLint("SetJavaScriptEnabled")
 private fun sourceWebView(ctx: android.content.Context, ua: String?, onPage: (WebView, String) -> Unit, onProgress: (Boolean) -> Unit) =
     WebView(ctx).apply {
+        // AndroidView gives views WRAP_CONTENT: a WebView then sizes the page to its content, and pages that take the
+        // window's height (html { height: 100% }, Author.Today's mobile site) come out 0 px tall and blank
+        layoutParams = android.view.ViewGroup.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT)
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
-        if (ua != null) settings.userAgentString = ua
+        // sites treat "; wv" (an in-app WebView) differently, Author.Today's mobile pages break on it: look like Chrome
+        settings.userAgentString = (ua ?: settings.userAgentString).replace("; wv)", ")")
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)   // OAuth pages on another domain
         webViewClient = object : WebViewClient() {

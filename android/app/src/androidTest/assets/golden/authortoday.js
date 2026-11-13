@@ -1,4 +1,4 @@
-/* authortoday 1.0.0 · api 1 · qjs-ng-0.12.1 · core 1.1.0 */
+/* authortoday 1.0.1 · api 1 · qjs-ng-0.12.1 · core 1.1.0 */
 "use strict";
 (() => {
   var __defProp = Object.defineProperty;
@@ -13,7 +13,7 @@
   var manifest_default = {
     id: "authortoday",
     name: "Author.Today",
-    version: "1.0.0",
+    version: "1.0.1",
     api: 1,
     lang: "ru",
     site: "https://author.today",
@@ -3655,8 +3655,9 @@
 
   // plugins/authortoday/index.ts
   var SITE = "https://author.today";
+  var DESKTOP = { Cookie: "mobile-mode=false" };
   async function page(url) {
-    const r = await fetch(url);
+    const r = await fetch(url, { headers: DESKTOP });
     if (r.status === 404) fail("NOT_FOUND", "no such page", url);
     if (r.status === 429) fail("RATE_LIMITED", "Author.Today 429");
     if (r.status === 403 && !/text\/html/.test(r.headers["content-type"] || "")) fail("NEEDS_BROWSER", "Проверка защиты сайта", url);
@@ -3816,7 +3817,7 @@
       const id = chapterId === "0" ? /chapterId:\s*(\d+)\s*,/.exec(html)?.[1] : chapterId;
       if (!id) fail("CHANGED_LAYOUT", "no chapter id", readerUrl);
       const url = `${SITE}/reader/${bookId}/chapter?id=${id}`;
-      const r = await fetch(url, { headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest", Referer: readerUrl }, responseHeaders: ["reader-secret"] });
+      const r = await fetch(url, { headers: { ...DESKTOP, Accept: "application/json", "X-Requested-With": "XMLHttpRequest", Referer: readerUrl }, responseHeaders: ["reader-secret"] });
       if (r.status === 429) fail("RATE_LIMITED", "Author.Today 429");
       if (r.status !== 200) fail(r.status === 404 ? "NOT_FOUND" : "CHANGED_LAYOUT", `HTTP ${r.status}`, readerUrl);
       let d;

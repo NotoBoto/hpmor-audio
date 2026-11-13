@@ -34,6 +34,7 @@ class UnisonApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        if (BuildConfig.DEBUG) android.webkit.WebView.setWebContentsDebuggingEnabled(true)   // chrome://inspect for source login pages
         store = Store(this, scope)
         repo = Repo(this, store)
         downloads = Downloads(this, this, scope)
