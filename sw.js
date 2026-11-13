@@ -1,5 +1,5 @@
 // Unison service worker: app shell precached; chapter files live in DATA (filled by the page's "Скачать").
-const SHELL = 'unison-shell-v4';
+const SHELL = 'unison-shell-v5';   // v5: sync v2 (keeps books of plugin sources)
 const DATA = 'unison-data-v1';
 const KEEP = [SHELL, DATA, 'hpmor-data-v1'];  // old data cache is migrated by the page, then deleted
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];

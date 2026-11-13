@@ -41,8 +41,8 @@ android {
         applicationId = "io.github.notoboto.unison"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.2.1"
+        versionCode = 14
+        versionName = "1.3.0"
         ndk { abiFilters += listOf("arm64-v8a") }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
