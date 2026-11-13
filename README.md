@@ -33,6 +33,20 @@ Unison — читалка-библиотека в духе Tachiyomi, тольк
 
 **[Скачать APK](https://github.com/NotoBoto/unison/releases/latest)** · исходники — в папке [`android/`](android/).
 
+## Книги с сайтов (расширения)
+
+С версии 1.3.0 приложение берёт книги прямо с сайтов через расширения-источники: «Обзор» → «Сайты (расширения)».
+Текст главы приходит с сайта, озвучивает её синтезатор телефона. Расширения ставятся только из репозиториев,
+подписанных ключом Unison.
+
+| Репозиторий | Источники | Как подключить |
+|---|---|---|
+| [unison-sources](https://github.com/NotoBoto/unison-sources) | Викитека | встроен в приложение |
+| [unison-sources-extra](https://github.com/NotoBoto/unison-sources-extra) | RanobeLib, Author.Today | «Расширения» → «Добавить репозиторий» → `https://notoboto.github.io/unison-sources-extra/` |
+
+Контент сайтов принадлежит их правообладателям: используйте его только для себя. Для глав 18+ на RanobeLib
+и платных глав Author.Today нужен вход в свой аккаунт («Войти» на экране источника).
+
 ## Сайт на телефоне (без установки APK)
 
 1. Откройте [notoboto.github.io/unison](https://notoboto.github.io/unison/) в Chrome.
